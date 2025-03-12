@@ -19,3 +19,5 @@ https://podcastfillers.github.io/
 
 
 Considerando invece l'ipotesi di concentrarci solo sull'audio, gradiremmo dei consigli sui tipi di modifiche che potremmo cercare di apportare rispetto all'implementazione descritta dal paper di riferimento (es. sostituire alcuni moduli interni alla rete, considerare approcci diversi - spettrogramma o end-to-end -, o altro)
+
+OVERLEAF LINK PAPER: https://www.overleaf.com/project/655e2f7c12b597bb6eec9a4c

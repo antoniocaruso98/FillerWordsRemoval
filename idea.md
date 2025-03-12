@@ -22,3 +22,8 @@ Complessivamente il task è assimilabile a una object detection applicata all'au
 - Recall
 
 (Le classi sono sbilanciate, perchè quella negativa è molto più frequente)
+
+## Dataset
+
+- Training: dataset con classe binaria, a livello di singola word (dato un audio con una sola parola -> Filler o no);
+- Test: dataset con frasi e timestamp di inizio e fine per ogni filler word; (da verificare)

@@ -21,3 +21,31 @@ https://podcastfillers.github.io/
 Considerando invece l'ipotesi di concentrarci solo sull'audio, gradiremmo dei consigli sui tipi di modifiche che potremmo cercare di apportare rispetto all'implementazione descritta dal paper di riferimento (es. sostituire alcuni moduli interni alla rete, considerare approcci diversi - spettrogramma o end-to-end -, o altro)
 
 OVERLEAF LINK PAPER: https://www.overleaf.com/project/655e2f7c12b597bb6eec9a4c
+
+
+
+Gentile Antonio,
+
+scusami e scusatemi per il ritardo nella risposta, mi era sfuggita la mail e l'ho ritrovata andando a cercare mail di studenti "perse".
+
+Spero di essere ancora in tempo.
+
+A dire il vero non so se avessi in mente un articolo preciso,
+
+di sicuro avevo visto un video tutorial su internet, tipo questo (ma non questo)
+
+https://www.youtube.com/watch?v=ydsFzu_wPb4
+
+Ho visto che è "uscito" anche un tool per fare ciò: https://www.descript.com/
+
+Si potrebbe prendere spunto da quello
+
+Io pensavo di prendere i video delle lezioni registrate dai docenti del poli, ce ne sono tantissimi, eventualmente anche i miei. Individuare eventuali docenti che abbondano di filler words, oppure se non si trovano "inventarsi qualcosa" tipo un docente che dice sempre "ok?" a fine frase e togliere quello.
+
+L'integrazione con il video può essere anche molto semplice, tipo se nel video c'è qualcosa che si muove (docente che scrive a penna o da tastiera, eventualmente mouse che si muove, ma potrebbe essere inutile, ...) non si può "tagliare", altrimenti sì.
+
+Se vi interessa cerchiamo insieme qualche cosa di più, spero di non essere in ritardo.
+
+Grazie dell'interesse.
+
+Servetti

@@ -51,13 +51,9 @@ Grazie dell'interesse.
 Servetti
 
 
-Questo non mi sembra male come lavoro:
+Questo non mi sembra male come lavoro: https://arxiv.org/pdf/2203.15135v1.pdf
 
-https://arxiv.org/pdf/2203.15135v1.pdf
-
-Uno strumento utile è avere un riconoscitore del parlato con timestamp a livello di singola parola
-
-https://github.com/linto-ai/whisper-timestamped
+Uno strumento utile è avere un riconoscitore del parlato con timestamp a livello di singola parola https://github.com/linto-ai/whisper-timestamped
 
 
 Se volete metterla sul ridere: https://github.com/DennisFaucher/FillerWordsShock

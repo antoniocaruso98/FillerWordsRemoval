@@ -62,3 +62,9 @@ https://github.com/linto-ai/whisper-timestamped
 Se volete metterla sul ridere:
 
 https://github.com/DennisFaucher/FillerWordsShock
+
+Poichè Google Speech-to-Text API trascrive l'audio in tempo reale ma sopprime le filler word, l'autore opra per IBM Watson Speech-to-Text che non le sopprime ma le sostituisce con "%HESITATION". È stato quindi possibile evidenziarle modificando il codice per evidenziare queste occorrenze nel testo trascritto.
+
+Il codice del progetto è stato adattato per:eEvidenziare le parole di riempimento con simboli visivi (es. “💥”). Modificare la soglia di confidenza per ridurre falsi positivi. Rendere l'interfaccia più semplice e visibile per l'utente.
+
+L'obiettivo generale del progetto è di fornire feedback in tempo reale su queste parole durante presentazioni o discorsi, migliorando così l'efficacia comunicativa

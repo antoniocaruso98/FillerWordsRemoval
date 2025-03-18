@@ -32,9 +32,7 @@ Spero di essere ancora in tempo.
 
 A dire il vero non so se avessi in mente un articolo preciso,
 
-di sicuro avevo visto un video tutorial su internet, tipo questo (ma non questo)
-
-https://www.youtube.com/watch?v=ydsFzu_wPb4
+di sicuro avevo visto un video tutorial su internet, tipo questo (ma non questo): https://www.youtube.com/watch?v=ydsFzu_wPb4
 
 Ho visto che è "uscito" anche un tool per fare ciò: https://www.descript.com/
 
@@ -53,7 +51,7 @@ Servetti
 
 Questo non mi sembra male come lavoro: https://arxiv.org/pdf/2203.15135v1.pdf
 
-Uno strumento utile è avere un riconoscitore del parlato con timestamp a livello di singola parola https://github.com/linto-ai/whisper-timestamped
+Uno strumento utile è avere un riconoscitore del parlato con timestamp a livello di singola parola https://github.com/linto-ai/whisper-timestamped. Praticamente fa già tutto il lavoro perchè basta rimuovere i pezzi marcati come filler. Cosa dobbiamo aggiungere?
 
 
 Se volete metterla sul ridere: https://github.com/DennisFaucher/FillerWordsShock

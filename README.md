@@ -61,3 +61,8 @@ Poichè Google Speech-to-Text API trascrive l'audio in tempo reale ma sopprime l
 Il codice del progetto è stato adattato per: evidenziare le parole di riempimento con simboli visivi (es. “💥”). Modificare la soglia di confidenza per ridurre falsi positivi. Rendere l'interfaccia più semplice e visibile per l'utente.
 
 L'obiettivo generale del progetto è di fornire feedback in tempo reale su queste parole durante presentazioni o discorsi, migliorando così l'efficacia comunicativa
+
+
+- DATASET ETICHETTATO (PODCASTFILLERS)
+
+https://zenodo.org/records/7121457#.Y0bzKezMKdY

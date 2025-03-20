@@ -1,0 +1,7 @@
+- Idea:
+ 
+Classification with localization, sfruttando il meccanismo di sliding window su spettrogramma tramite convoluzioni,
+che risultano più efficienti di un doppio ciclo for.
+
+Visto che l'audio può avere lunghezze molto differenti, dividere il file di input in clip di durata prefissata e operare
+separatamente su ciascuna di esse.

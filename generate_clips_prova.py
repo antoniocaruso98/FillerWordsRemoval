@@ -37,7 +37,7 @@ def split_audio(input_file=".\ytmp3free.cc_zia-tina-compilation-bella-cadduosa-e
     for i in range(0, total_length, clip_length):
         clip = audio[i:i + clip_length]
 
-        # Se l'ultima clip è più corta di 10 secondi, aggiungi silenzio
+        # Se l'ultima clip è più corta di 'clip_length', aggiungi silenzio
         if len(clip) < clip_length:
             silence_duration = clip_length - len(clip)
             clip += AudioSegment.silent(duration=silence_duration)
@@ -45,7 +45,7 @@ def split_audio(input_file=".\ytmp3free.cc_zia-tina-compilation-bella-cadduosa-e
         # Salva la clip
         clip.export(f"clip_{i // clip_length + 1}.mp3", format="mp3")
 
-    print("Divisione completata!")
+    print(f"Divisione '{input_file}' completata!")
 
 
 

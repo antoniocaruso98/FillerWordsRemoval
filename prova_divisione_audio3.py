@@ -12,9 +12,9 @@ def split_audio_librosa(file_path, clip_length=10, output_folder="clips"):
     Se ultima clip è minore della lunghezza desiderata, padding con silenzio.
 
     Args:
-        file_path (str): Il percorso del file audio di input. Default: "input.mp3".
+        file_path (str): Il percorso del file audio di input.
         clip_length (int): La lunghezza desiderata di ogni clip in secondi. Default: 10.
-        output_folder (str): Il percorso dove vengono salvate le clip generate.
+        output_folder (str): Il percorso dove vengono salvate le clip generate. Default: "clips"
     Returns:
         None: Le clip vengono salvate come file separati nel formato mp3.
 

@@ -4,7 +4,7 @@ import os
 import numpy as np
 
 def split_audio_librosa(file_path, clip_length=10, output_folder="clips"):
-        # docstring di info che chiamo con help(split_audio)
+        # docstring di info che chiamo con help(split_audio_librosa)
     '''
     Divide un file audio di formato e lunghezza arbitrari
     in una serie di clip di lunghezza specifiata in ms.

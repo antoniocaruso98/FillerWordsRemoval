@@ -55,7 +55,7 @@ L'obiettivo generale del progetto è di fornire feedback in tempo reale su quest
 
 https://zenodo.org/records/7121457#.Y0bzKezMKdY
 
--Filler Word Detection and Classification: A Dataset and Benchmark: https://arxiv.org/pdf/2203.15135v1.pdf
+-- Filler Word Detection and Classification: A Dataset and Benchmark: https://arxiv.org/pdf/2203.15135v1.pdf
 -um_detector: https://github.com/ezxzeng/um_detector 
 
 -Deep Learning Object Detection Approaches to Signal Identification: https://arxiv.org/abs/2210.16173

@@ -2,8 +2,9 @@ import torch
 import os
 import pandas as pd
 import librosa
-import sounddevice as sd
 from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import matplotlib.pyplot as plt
 
 class myDataset (Dataset):
     
@@ -60,10 +61,19 @@ class myDataset (Dataset):
         clip_name = self.labels_df['clip_name'].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
         #print(f'sampling rate = {sr}')
-        audio_clip = torch.tensor(audio)
+        #audio_clip = torch.tensor(audio)
+
+        # LOG-MEL SPECTROGRAM
+        mel_spect = librosa.feature.melspectrogram(y=audio,sr=sr, n_fft=256, hop_length=10, win_length=20)
+        mel_spect_db = librosa.power_to_db(mel_spect, ref=np.max)
+        # spectrogram plot
+        librosa.display.specshow(mel_spect_db, y_axis='mel', fmax=sr/2, x_axis='time')
+        plt.title('Mel Spectrogram')
+        plt.colorbar(format='%+2.0f dB')
+        print("Shape of spectrogram: {}".format(mel_spect_db.shape))
         
         # return (data, label)
-        return (audio_clip, full_label)
+        return (torch.tensor(mel_spect_db), full_label)
     
     def __len__(self):
         return len(self.labels_df)

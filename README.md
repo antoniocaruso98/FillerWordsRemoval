@@ -24,29 +24,17 @@ OVERLEAF LINK PAPER: https://www.overleaf.com/project/655e2f7c12b597bb6eec9a4c
 
 
 
-Gentile Antonio,
-
-scusami e scusatemi per il ritardo nella risposta, mi era sfuggita la mail e l'ho ritrovata andando a cercare mail di studenti "perse".
-
-Spero di essere ancora in tempo.
 
 A dire il vero non so se avessi in mente un articolo preciso,
 
 di sicuro avevo visto un video tutorial su internet, tipo questo (ma non questo): https://www.youtube.com/watch?v=ydsFzu_wPb4
 
-Ho visto che è "uscito" anche un tool per fare ciò: https://www.descript.com/
-
-Si potrebbe prendere spunto da quello
+Ho visto che è "uscito" anche un tool per fare ciò: https://www.descript.com/ Si potrebbe prendere spunto da quello
 
 Io pensavo di prendere i video delle lezioni registrate dai docenti del poli, ce ne sono tantissimi, eventualmente anche i miei. Individuare eventuali docenti che abbondano di filler words, oppure se non si trovano "inventarsi qualcosa" tipo un docente che dice sempre "ok?" a fine frase e togliere quello.
 
 L'integrazione con il video può essere anche molto semplice, tipo se nel video c'è qualcosa che si muove (docente che scrive a penna o da tastiera, eventualmente mouse che si muove, ma potrebbe essere inutile, ...) non si può "tagliare", altrimenti sì.
 
-Se vi interessa cerchiamo insieme qualche cosa di più, spero di non essere in ritardo.
-
-Grazie dell'interesse.
-
-Servetti
 
 
 Questo non mi sembra male come lavoro: https://arxiv.org/pdf/2203.15135v1.pdf
@@ -66,3 +54,11 @@ L'obiettivo generale del progetto è di fornire feedback in tempo reale su quest
 - DATASET ETICHETTATO (PODCASTFILLERS)
 
 https://zenodo.org/records/7121457#.Y0bzKezMKdY
+
+- Filler Word Detection and Classification: A Dataset and Benchmark: https://arxiv.org/pdf/2203.15135v1.pdf
+- um_detector: https://github.com/ezxzeng/um_detector 
+
+- Deep Learning Object Detection Approaches to Signal Identification: https://arxiv.org/abs/2210.16173
+- You Only Hear Once: A YOLO-like Algorithm for Audio Segmentation and Sound Event Detection: https://arxiv.org/abs/2109.00962
+- SpeechYOLO: Detection and Localization of Speech Objects: https://arxiv.org/abs/1904.07704
+

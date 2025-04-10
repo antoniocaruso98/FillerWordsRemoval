@@ -60,5 +60,5 @@ https://zenodo.org/records/7121457#.Y0bzKezMKdY
 
 - Deep Learning Object Detection Approaches to Signal Identification: https://arxiv.org/abs/2210.16173
 - You Only Hear Once: A YOLO-like Algorithm for Audio Segmentation and Sound Event Detection: https://arxiv.org/abs/2109.00962
-- SpeechYOLO: Detection and Localization of Speech Objects: https://arxiv.org/abs/1904.07704
+- SpeechYOLO: Detection and Localization of Speech Objects: https://arxiv.org/abs/1904.07704 - repository: https://github.com/MLSpeech/speech_yolo
 

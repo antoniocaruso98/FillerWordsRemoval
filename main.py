@@ -20,12 +20,12 @@ class myDataset (Dataset):
         self.type = type
         match self.type:
             case 'train':
-                labels_file = 'PodcastFillers_train_labels.csv'
+                labels_file = 'PodcastFillers_train_labels_shuffled.csv'
             case 'test':
-                labels_file = 'PodcastFillers_test_labels.csv'
+                labels_file = 'PodcastFillers_test_labels_shuffled.csv'
             case 'validation':
-                labels_file = 'PodcastFillers_validation_labels.csv'
-        self.labels_file_path = os.path.join(self.root_folder, labels_file)
+                labels_file = 'PodcastFillers_validation_labels_shuffled.csv'
+        self.labels_file_path = labels_file
 
         # full path to data folder
         self.data_folder = os.path.join(root_folder, type)
@@ -86,16 +86,19 @@ class myDataset (Dataset):
         # the spectrogram must now be converted to a square image (size x size)
         size = 224
         db_mel_spec = cv2.resize(db_mel_spec, (size, size), interpolation=cv2.INTER_NEAREST)
+        
+        # normalize the spectrogram to [0, 1]
+        db_mel_spec = (db_mel_spec - np.min(db_mel_spec)) / (np.max(db_mel_spec) - np.min(db_mel_spec))
 
         # plot the spectrogram for debug purposes
-        '''
+        
         librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
         plt.title('MEL scale dB-spectrogram')
         plt.colorbar(format='%+2.0f dB')
         plt.xlabel('time (s)')
         plt.ylabel('frequency (Hz)')
         plt.show()
-        '''
+        
         
         # return (data, label)
         return (torch.tensor(db_mel_spec), full_label)
@@ -227,13 +230,5 @@ def evaluate(losses, predict, eval_set):
 
 
 if __name__ == '__main__':
-    os.system('cls')
-    ds = myDataset('clip_wav', 'train')
-    
-    #audio = librosa.load('clip_wav/train/00001.wav')
-    audio, label = ds[0]
-
-    #print(audio.shape)
-    #print(label)
-    sd.play(audio, samplerate=16000)
-    sd.wait()
+    ds = myDataset(os.path.join('..','clip_wav'), 'train')
+    data, label = ds[0]

@@ -80,6 +80,129 @@ class myDataset (Dataset):
 
         
 
+
+def train(model, transform, criterion, optimizer, epoch, log_interval, train_loader, device):
+    # set model in training mode
+    model.train()
+    for batch_idx, (data, target) in enumerate(train_loader):
+
+        data = data.to(device)
+        target = target.to(device)
+
+        # apply transform and model on whole batch directly on device
+        if transform != None :
+          data = transform(data)
+        output = model(data)
+
+        # negative log-likelihood for a tensor of size (batch x 1 x n_output)
+        # loss = F.nll_loss(output.squeeze(), target)
+        loss = criterion(output, target)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        # print training stats
+        if batch_idx % log_interval == 0:
+            print()
+            print(f"       Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]")
+            print(f"       Loss: {loss.item():.6f}")
+
+        # update progress bar
+        pbar.update(pbar_update)
+
+        # record loss
+        losses.append(loss.item())        
+
+
+
+
+
+
+def number_of_correct(pred, target):
+    # count number of correct predictions
+    return pred.squeeze().eq(target).sum().item()
+
+
+def get_likely_index(tensor):
+    # find most likely label index for each element in the batch
+    return tensor.argmax(dim=-1)
+
+
+def test(model, transform, criterion, epoch):
+    model.eval()
+    correct = 0
+    for data, target in test_loader:
+
+        data = data.to(device)
+        target = target.to(device)
+
+        # apply transform and model on whole batch directly on device
+        if transform != None :
+          data = transform(data)
+
+        output = model(data)
+        loss = criterion(output, target)
+
+        pred = get_likely_index(output)
+        correct += number_of_correct(pred, target)
+
+        # update progress bar
+        pbar.update(pbar_update)
+
+
+    print(f"\nTest Epoch: {epoch}\tAccuracy: {correct}/{len(test_loader.dataset)} ({100. * correct / len(test_loader.dataset):.0f}%)\n")        
+
+
+
+
+# Returns the predict function binded to the model and transform
+def predictor(model, transform):
+
+    def p(tensor):
+      # Use the model to predict the label of the waveform
+      tensor = tensor.to(device)
+      tensor = transform(tensor)
+      tensor = model(tensor.unsqueeze(0))
+      tensor = get_likely_index(tensor)
+      tensor = index_to_label(tensor.squeeze())
+      return tensor
+
+    return p
+
+
+
+
+def evaluate(losses, predict, eval_set):
+
+  # Let's plot the training loss versus the number of iteration.
+  plt.plot(losses);
+  plt.title("training loss");
+
+  cnt = 0
+
+  for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
+      try:
+          output = predict(waveform)
+      except:
+          None
+          # print("An exception occurred ", utterance, output)
+      if output != utterance:
+          # ipd.Audio(waveform.numpy(), rate=sample_rate)
+          # print(f"Data point #{i}. Expected: {utterance}. Predicted: {output}.")
+          print('-', end="")
+      else:
+          print('*', end="")
+          cnt = cnt + 1
+      if(not((i+1) % 100)):
+        print()
+
+  return cnt/len(eval_set)
+
+
+
+
+
 if __name__ == '__main__':
     os.system('cls')
     ds = myDataset('clip_wav', 'train')

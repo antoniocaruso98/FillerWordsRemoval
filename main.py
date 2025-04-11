@@ -5,6 +5,7 @@ import librosa
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
+import cv2
 
 class myDataset (Dataset):
     
@@ -60,25 +61,47 @@ class myDataset (Dataset):
         # now reading actual data from file
         clip_name = self.labels_df['clip_name'].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
-        #print(f'sampling rate = {sr}')
-        #audio_clip = torch.tensor(audio)
+        
+        # creating LOG-MEL spectrogram
+        
+        # define window length = nr. samples in time/frequency
+        n_fft = 512
+        win_length = n_fft
+        # define hop length
+        hop_length = win_length // 2
+        # define n_mels = nr. frequency bins
+        n_mels = 128
+        # define maximum frequency = 0.5 * sampling rate
+        fmax = 0.5 * sr
+        
+        # generate spectrogram
+        mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft,
+                                          win_length=win_length, hop_length=hop_length)
+        
+        # convert to Power Spectrogram by taking modulus and squaring
+        mel_spec = np.abs(mel_spec) ** 2
+        # convert power to dB
+        db_mel_spec = librosa.power_to_db(mel_spec)
 
-        # LOG-MEL SPECTROGRAM
-        mel_spect = librosa.feature.melspectrogram(y=audio,sr=sr, n_fft=256, hop_length=10, win_length=20)
-        mel_spect_db = librosa.power_to_db(mel_spect, ref=np.max)
-        # spectrogram plot
-        librosa.display.specshow(mel_spect_db, y_axis='mel', fmax=sr/2, x_axis='time')
-        plt.title('Mel Spectrogram')
+        # the spectrogram must now be converted to a square image (size x size)
+        size = 224
+        db_mel_spec = cv2.resize(db_mel_spec, (size, size), interpolation=cv2.INTER_NEAREST)
+
+        # plot the spectrogram for debug purposes
+        '''
+        librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
+        plt.title('MEL scale dB-spectrogram')
         plt.colorbar(format='%+2.0f dB')
-        print("Shape of spectrogram: {}".format(mel_spect_db.shape))
+        plt.xlabel('time (s)')
+        plt.ylabel('frequency (Hz)')
+        plt.show()
+        '''
         
         # return (data, label)
-        return (torch.tensor(mel_spect_db), full_label)
+        return (torch.tensor(db_mel_spec), full_label)
     
     def __len__(self):
-        return len(self.labels_df)
-
-        
+        return len(self.labels_df)      
 
 
 def train(model, transform, criterion, optimizer, epoch, log_interval, train_loader, device):

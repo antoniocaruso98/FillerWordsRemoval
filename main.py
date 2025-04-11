@@ -90,6 +90,25 @@ class myDataset (Dataset):
         # normalize the spectrogram to [0, 1]
         db_mel_spec = (db_mel_spec - np.min(db_mel_spec)) / (np.max(db_mel_spec) - np.min(db_mel_spec))
 
+        # generate a random number between -0.5 and 0.5
+        # to be used for data augmentation
+        random_number =  np.random.uniform(-0.5, 0.5)
+        # shift the spectrogram by a quantity proportional to the random number on time axis
+        # and add the random number to the center_t value. Fill the rest of the
+        # spectrogram with 0s.
+        shift = int(random_number * size)
+        # apply the shift to the spectrogram
+        new_spectrogram = np.zeros((size, size))
+        if shift > 0:
+            new_spectrogram[:, shift:] = db_mel_spec[:, :-shift]
+        elif shift < 0:
+            new_spectrogram[:, :shift] = db_mel_spec[:, -shift:]
+
+        db_mel_spec = new_spectrogram
+
+        # update the center_t label
+        full_label[-2] += random_number
+
         # plot the spectrogram for debug purposes
         
         librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
@@ -232,3 +251,5 @@ def evaluate(losses, predict, eval_set):
 if __name__ == '__main__':
     ds = myDataset(os.path.join('..','clip_wav'), 'train')
     data, label = ds[0]
+
+    print(label)

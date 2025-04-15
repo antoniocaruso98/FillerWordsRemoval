@@ -126,7 +126,7 @@ class myDataset (Dataset):
         
         
         # return (data, label)
-        return (torch.tensor(db_mel_spec), full_label)
+        return (torch.tensor(db_mel_spec,dtype=torch.float32).unsqueeze(0), torch.tensor(label_nr, dtype=torch.long))
     
     def __len__(self):
         return len(self.labels_df)      
@@ -298,7 +298,7 @@ def main():
     num_classes = len(train_set.classes_list)
     model = initialize_model(num_classes, device)
     print(model)
-    summary(model, (1, 128, 128))
+    summary(model, (1, 224, 224))
 
     # Loss function, optimizer, and scheduler
     criterion = nn.CrossEntropyLoss()

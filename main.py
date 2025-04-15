@@ -1,4 +1,10 @@
 import torch
+import torch.nn as nn
+import torchvision
+from torchsummary import summary
+from torch.optim import Adam
+from torch.optim.lr_scheduler import OneCycleLR
+from tqdm import tqdm
 import os
 import pandas as pd
 import librosa
@@ -111,12 +117,12 @@ class myDataset (Dataset):
 
         # plot the spectrogram for debug purposes
         
-        librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
-        plt.title('MEL scale dB-spectrogram')
-        plt.colorbar(format='%+2.0f dB')
-        plt.xlabel('time (s)')
-        plt.ylabel('frequency (Hz)')
-        plt.show()
+        #librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
+        #plt.title('MEL scale dB-spectrogram')
+        #plt.colorbar(format='%+2.0f dB')
+        #plt.xlabel('time (s)')
+        #plt.ylabel('frequency (Hz)')
+        #plt.show()
         
         
         # return (data, label)
@@ -127,129 +133,220 @@ class myDataset (Dataset):
 
 
 def train(model, transform, criterion, optimizer, epoch, log_interval, train_loader, device):
-    # set model in training mode
+    """Train the model for one epoch."""
     model.train()
+    losses = []
+    pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}", leave=False)
+    
     for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
 
-        data = data.to(device)
-        target = target.to(device)
+        # Apply transform if provided
+        if transform:
+            data = transform(data)
 
-        # apply transform and model on whole batch directly on device
-        if transform != None :
-          data = transform(data)
+        # Forward pass
         output = model(data)
-
-        # negative log-likelihood for a tensor of size (batch x 1 x n_output)
-        # loss = F.nll_loss(output.squeeze(), target)
         loss = criterion(output, target)
 
+        # Backward pass and optimization
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # print training stats
+        # Log training stats
         if batch_idx % log_interval == 0:
-            print()
-            print(f"       Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]")
-            print(f"       Loss: {loss.item():.6f}")
+            print(f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} "
+                  f"({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}")
 
-        # update progress bar
-        pbar.update(pbar_update)
+        # Update progress bar and record loss
+        pbar.update(1)
+        losses.append(loss.item())
 
-        # record loss
-        losses.append(loss.item())        
-
-
-
-
+    pbar.close()
+    return losses
 
 
 def number_of_correct(pred, target):
-    # count number of correct predictions
-    return pred.squeeze().eq(target).sum().item()
+    """Count the number of correct predictions."""
+    return pred.eq(target).sum().item()
 
 
 def get_likely_index(tensor):
-    # find most likely label index for each element in the batch
+    """Find the most likely label index for each element in the batch."""
     return tensor.argmax(dim=-1)
 
 
-def test(model, transform, criterion, epoch):
+def test(model, transform, criterion, test_loader, device):
+    """Evaluate the model on the test set."""
     model.eval()
+    test_loss = 0
     correct = 0
-    for data, target in test_loader:
+    pbar = tqdm(total=len(test_loader), desc="Testing", leave=False)
 
-        data = data.to(device)
-        target = target.to(device)
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
 
-        # apply transform and model on whole batch directly on device
-        if transform != None :
-          data = transform(data)
+            # Apply transform if provided
+            if transform:
+                data = transform(data)
 
-        output = model(data)
-        loss = criterion(output, target)
+            # Forward pass
+            output = model(data)
+            test_loss += criterion(output, target).item()
 
-        pred = get_likely_index(output)
-        correct += number_of_correct(pred, target)
+            # Calculate accuracy
+            pred = get_likely_index(output)
+            correct += number_of_correct(pred, target)
 
-        # update progress bar
-        pbar.update(pbar_update)
+            pbar.update(1)
 
-
-    print(f"\nTest Epoch: {epoch}\tAccuracy: {correct}/{len(test_loader.dataset)} ({100. * correct / len(test_loader.dataset):.0f}%)\n")        
-
-
-
-
-# Returns the predict function binded to the model and transform
-def predictor(model, transform):
-
-    def p(tensor):
-      # Use the model to predict the label of the waveform
-      tensor = tensor.to(device)
-      tensor = transform(tensor)
-      tensor = model(tensor.unsqueeze(0))
-      tensor = get_likely_index(tensor)
-      tensor = index_to_label(tensor.squeeze())
-      return tensor
-
-    return p
+    pbar.close()
+    test_loss /= len(test_loader.dataset)
+    accuracy = 100. * correct / len(test_loader.dataset)
+    print(f"\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} "
+          f"({accuracy:.2f}%)\n")
+    return test_loss, accuracy
 
 
+def predictor(model, transform, device):
+    """Return a prediction function bound to the model and transform."""
+    def predict(tensor):
+        model.eval()
+        with torch.no_grad():
+            tensor = tensor.to(device)
+            if transform:
+                tensor = transform(tensor)
+            tensor = model(tensor.unsqueeze(0))
+            return get_likely_index(tensor).item()
+    return predict
 
 
 def evaluate(losses, predict, eval_set):
+    """Evaluate the model on a custom evaluation set."""
+    print("\nEvaluating on validation set...")
+    correct = 0
 
-  # Let's plot the training loss versus the number of iteration.
-  plt.plot(losses);
-  plt.title("training loss");
+    for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
+        try:
+            output = predict(waveform)
+            if output == utterance:
+                correct += 1
+                print('*', end="")
+            else:
+                print('-', end="")
+        except Exception as e:
+            print(f"Error during evaluation: {e}", end="")
 
-  cnt = 0
+        if (i + 1) % 100 == 0:
+            print()
 
-  for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
-      try:
-          output = predict(waveform)
-      except:
-          None
-          # print("An exception occurred ", utterance, output)
-      if output != utterance:
-          # ipd.Audio(waveform.numpy(), rate=sample_rate)
-          # print(f"Data point #{i}. Expected: {utterance}. Predicted: {output}.")
-          print('-', end="")
-      else:
-          print('*', end="")
-          cnt = cnt + 1
-      if(not((i+1) % 100)):
-        print()
-
-  return cnt/len(eval_set)
+    accuracy = correct / len(eval_set)
+    print(f"\nValidation set accuracy: {accuracy:.2f}")
+    return accuracy
 
 
+def initialize_model(num_classes, device):
+    """Initialize the ResNet18 model for single-channel input."""
+    model = torchvision.models.resnet18(weights=None)
+    model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+    model.fc = nn.Linear(512, num_classes, bias=True)  # Adjust output layer for the number of classes
+    model = model.to(device)
+    return model
 
+
+def prepare_dataloaders(train_set, test_set, batch_size, device):
+    """Prepare DataLoader objects for training and testing."""
+    num_workers = 1 if device == "cuda" else 0
+    pin_memory = device == "cuda"
+
+    train_loader = DataLoader(
+        train_set,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+    test_loader = DataLoader(
+        test_set,
+        batch_size=batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+    return train_loader, test_loader
+
+
+
+def main():
+    # Set device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Dataset and DataLoader
+    root_folder = os.path.join('..', 'clip_wav')
+    train_set = myDataset(root_folder, 'train')
+    test_set = myDataset(root_folder, 'test')
+    valid_set = myDataset(root_folder, 'validation')
+
+    batch_size = 256
+    train_loader, test_loader = prepare_dataloaders(train_set, test_set, batch_size, device)
+
+    # Model initialization
+    num_classes = len(train_set.classes_list)
+    model = initialize_model(num_classes, device)
+    print(model)
+    summary(model, (1, 128, 128))
+
+    # Loss function, optimizer, and scheduler
+    criterion = nn.CrossEntropyLoss()
+    optimizer = Adam(model.parameters(), lr=0.01, weight_decay=0.0001)
+    scheduler = OneCycleLR(
+        optimizer,
+        max_lr=0.001,
+        steps_per_epoch=len(train_loader),
+        epochs=2,
+        anneal_strategy='linear'
+    )
+
+    # Training and evaluation
+    n_epoch = 2
+    log_interval = 20
+    losses = []
+
+    print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+
+    with tqdm(total=n_epoch) as pbar:
+        for epoch in range(1, n_epoch + 1):
+            train_losses = train(model, None, criterion, optimizer, epoch, log_interval, train_loader, device)
+            losses.extend(train_losses)
+            test(model, None, criterion, test_loader, device)
+            scheduler.step()
+
+    # Plot the training loss
+    plt.figure(figsize=(10, 6))
+    plt.plot(losses, label='Training Loss')
+    plt.xlabel('Batch Index')
+    plt.ylabel('Loss')
+    plt.title('Training Loss Over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+    # Evaluate on the validation set
+    predict = predictor(model, None)
+    print("\nEvaluating on validation set...")
+    accuracy = evaluate(losses, predict, valid_set)
+    print(f"Validation set prediction accuracy: {accuracy:.2f}")
 
 
 if __name__ == '__main__':
-    ds = myDataset(os.path.join('..','clip_wav'), 'train')
-    data, label = ds[0]
+    main()
 
-    print(label)
+
+
+
+
+
+

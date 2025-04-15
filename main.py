@@ -5,51 +5,52 @@ import librosa
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
+import spectrogram as sp
 
-class myDataset (Dataset):
-    
+
+class myDataset(Dataset):
+
     def __init__(self, root_folder: str, type: str):
         # set root folder for dataset
         self.root_folder = root_folder
         # check if train, test or validation set and
         # select appropriate annotations file
-        if type not in ['train', 'test', 'validation']:
-            type = 'train'
-        
+        if type not in ["train", "test", "validation"]:
+            type = "train"
+
         self.type = type
         match self.type:
-            case 'train':
-                labels_file = 'PodcastFillers_train_labels_shuffled.csv'
-            case 'test':
-                labels_file = 'PodcastFillers_test_labels_shuffled.csv'
-            case 'validation':
-                labels_file = 'PodcastFillers_validation_labels_shuffled.csv'
+            case "train":
+                labels_file = "PodcastFillers_train_labels_shuffled.csv"
+            case "test":
+                labels_file = "PodcastFillers_test_labels_shuffled.csv"
+            case "validation":
+                labels_file = "PodcastFillers_validation_labels_shuffled.csv"
         self.labels_file_path = labels_file
 
         # full path to data folder
         self.data_folder = os.path.join(root_folder, type)
-        
+
         # read labels file inside a Pandas Dataframe
         self.labels_df = pd.read_csv(self.labels_file_path)
         # list all unique classes (column: 'label')
-        self.classes_list = self.labels_df['label'].unique().tolist()
+        self.classes_list = self.labels_df["label"].unique().tolist()
 
         # associate each class name to an integer in the range [0, n-1]
         # for fast access Class name --> Class index
         self.classes_dict = {}
-        for (i, e) in enumerate(self.classes_list):
-            self.classes_dict.update({e : i})
-    
+        for i, e in enumerate(self.classes_list):
+            self.classes_dict.update({e: i})
+
     def __getitem__(self, index):
         # read row 'index' from the Dataframe
         line = self.labels_df.iloc[index]
         # extract raw string label
-        label_str = line['label']
+        label_str = line["label"]
         # extract delta_t
-        delta_t = line['delta_t']
+        delta_t = line["delta_t"]
         # extract center_t
-        center_t = line['center_t']
+        center_t = line["center_t"]
         # convert raw string to number
         label_nr = self.classes_dict[label_str]
         # convert label using one-hot encoding
@@ -59,74 +60,43 @@ class myDataset (Dataset):
         full_label = torch.cat((label_one_hot, torch.tensor([center_t, delta_t])))
 
         # now reading actual data from file
-        clip_name = self.labels_df['clip_name'].iloc[index]
+        clip_name = self.labels_df["clip_name"].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
-        
+
         # creating LOG-MEL spectrogram
-        
-        # define window length = nr. samples in time/frequency
         n_fft = 512
-        win_length = n_fft
-        # define hop length
-        hop_length = win_length // 2
-        # define n_mels = nr. frequency bins
         n_mels = 128
-        # define maximum frequency = 0.5 * sampling rate
-        fmax = 0.5 * sr
-        
-        # generate spectrogram
-        mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft,
-                                          win_length=win_length, hop_length=hop_length)
-        
-        # convert to Power Spectrogram by taking modulus and squaring
-        mel_spec = np.abs(mel_spec) ** 2
-        # convert power to dB
-        db_mel_spec = librosa.power_to_db(mel_spec)
+        spec = sp.get_db_mel_spectrogram(audio, n_fft=n_fft, n_mels=n_mels, sr=sr)
 
-        # the spectrogram must now be converted to a square image (size x size)
+        # converting spectrogram to a square image (size x size)
         size = 224
-        db_mel_spec = cv2.resize(db_mel_spec, (size, size), interpolation=cv2.INTER_NEAREST)
-        
-        # normalize the spectrogram to [0, 1]
-        db_mel_spec = (db_mel_spec - np.min(db_mel_spec)) / (np.max(db_mel_spec) - np.min(db_mel_spec))
+        spec = sp.square_spectrogram(spec, size)
 
-        # generate a random number between -0.5 and 0.5
-        # to be used for data augmentation
-        random_number =  np.random.uniform(-0.5, 0.5)
-        # shift the spectrogram by a quantity proportional to the random number on time axis
-        # and add the random number to the center_t value. Fill the rest of the
-        # spectrogram with 0s.
+        # normalize the spectrogram values to [0, 1]
+        spec = sp.normalize_spectrogram(spec)
+
+        # shift spectrogram on time axis by random amount (+- half size).
+        # The remaining part is filled with 0s
+        random_number = np.random.uniform(-0.5, 0.5)
         shift = int(random_number * size)
-        # apply the shift to the spectrogram
-        new_spectrogram = np.zeros((size, size))
-        if shift > 0:
-            new_spectrogram[:, shift:] = db_mel_spec[:, :-shift]
-        elif shift < 0:
-            new_spectrogram[:, :shift] = db_mel_spec[:, -shift:]
-
-        db_mel_spec = new_spectrogram
+        spec = sp.shift_spectrogram(spec, shift)
 
         # update the center_t label
         full_label[-2] += random_number
 
         # plot the spectrogram for debug purposes
-        
-        librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
-        plt.title('MEL scale dB-spectrogram')
-        plt.colorbar(format='%+2.0f dB')
-        plt.xlabel('time (s)')
-        plt.ylabel('frequency (Hz)')
-        plt.show()
-        
-        
+        sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
+
         # return (data, label)
-        return (torch.tensor(db_mel_spec), full_label)
-    
+        return (torch.tensor(spec), full_label)
+
     def __len__(self):
-        return len(self.labels_df)      
+        return len(self.labels_df)
 
 
-def train(model, transform, criterion, optimizer, epoch, log_interval, train_loader, device):
+def train(
+    model, transform, criterion, optimizer, epoch, log_interval, train_loader, device
+):
     # set model in training mode
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
@@ -135,8 +105,8 @@ def train(model, transform, criterion, optimizer, epoch, log_interval, train_loa
         target = target.to(device)
 
         # apply transform and model on whole batch directly on device
-        if transform != None :
-          data = transform(data)
+        if transform != None:
+            data = transform(data)
         output = model(data)
 
         # negative log-likelihood for a tensor of size (batch x 1 x n_output)
@@ -150,18 +120,16 @@ def train(model, transform, criterion, optimizer, epoch, log_interval, train_loa
         # print training stats
         if batch_idx % log_interval == 0:
             print()
-            print(f"       Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]")
+            print(
+                f"       Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ({100. * batch_idx / len(train_loader):.0f}%)]"
+            )
             print(f"       Loss: {loss.item():.6f}")
 
         # update progress bar
         pbar.update(pbar_update)
 
         # record loss
-        losses.append(loss.item())        
-
-
-
-
+        losses.append(loss.item())
 
 
 def number_of_correct(pred, target):
@@ -183,8 +151,8 @@ def test(model, transform, criterion, epoch):
         target = target.to(device)
 
         # apply transform and model on whole batch directly on device
-        if transform != None :
-          data = transform(data)
+        if transform != None:
+            data = transform(data)
 
         output = model(data)
         loss = criterion(output, target)
@@ -195,61 +163,55 @@ def test(model, transform, criterion, epoch):
         # update progress bar
         pbar.update(pbar_update)
 
-
-    print(f"\nTest Epoch: {epoch}\tAccuracy: {correct}/{len(test_loader.dataset)} ({100. * correct / len(test_loader.dataset):.0f}%)\n")        
-
-
+    print(
+        f"\nTest Epoch: {epoch}\tAccuracy: {correct}/{len(test_loader.dataset)} ({100. * correct / len(test_loader.dataset):.0f}%)\n"
+    )
 
 
 # Returns the predict function binded to the model and transform
 def predictor(model, transform):
 
     def p(tensor):
-      # Use the model to predict the label of the waveform
-      tensor = tensor.to(device)
-      tensor = transform(tensor)
-      tensor = model(tensor.unsqueeze(0))
-      tensor = get_likely_index(tensor)
-      tensor = index_to_label(tensor.squeeze())
-      return tensor
+        # Use the model to predict the label of the waveform
+        tensor = tensor.to(device)
+        tensor = transform(tensor)
+        tensor = model(tensor.unsqueeze(0))
+        tensor = get_likely_index(tensor)
+        tensor = index_to_label(tensor.squeeze())
+        return tensor
 
     return p
 
 
-
-
 def evaluate(losses, predict, eval_set):
 
-  # Let's plot the training loss versus the number of iteration.
-  plt.plot(losses);
-  plt.title("training loss");
+    # Let's plot the training loss versus the number of iteration.
+    plt.plot(losses)
+    plt.title("training loss")
 
-  cnt = 0
+    cnt = 0
 
-  for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
-      try:
-          output = predict(waveform)
-      except:
-          None
-          # print("An exception occurred ", utterance, output)
-      if output != utterance:
-          # ipd.Audio(waveform.numpy(), rate=sample_rate)
-          # print(f"Data point #{i}. Expected: {utterance}. Predicted: {output}.")
-          print('-', end="")
-      else:
-          print('*', end="")
-          cnt = cnt + 1
-      if(not((i+1) % 100)):
-        print()
+    for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
+        try:
+            output = predict(waveform)
+        except:
+            None
+            # print("An exception occurred ", utterance, output)
+        if output != utterance:
+            # ipd.Audio(waveform.numpy(), rate=sample_rate)
+            # print(f"Data point #{i}. Expected: {utterance}. Predicted: {output}.")
+            print("-", end="")
+        else:
+            print("*", end="")
+            cnt = cnt + 1
+        if not ((i + 1) % 100):
+            print()
 
-  return cnt/len(eval_set)
-
-
+    return cnt / len(eval_set)
 
 
-
-if __name__ == '__main__':
-    ds = myDataset(os.path.join('..','clip_wav'), 'train')
+if __name__ == "__main__":
+    ds = myDataset(os.path.join("..", "clip_wav"), "train")
     data, label = ds[0]
 
     print(label)

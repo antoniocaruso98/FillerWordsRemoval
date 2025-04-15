@@ -1,0 +1,97 @@
+"""
+This module abstracts the creation of a spectrogram by offering some
+interface functions to create, normalize, resize, transform and plot a spectrogram.
+
+Parameters:
+
+- sr: sampling rate of the audio files.
+
+- n_fft: number of time samples used to compute the discrete fourier transform.
+
+- win_length: defines how long the window for Short Time Fourier Transform should be
+in terms nr. of samples. Usually equal to n_fft.
+
+- hop length: nr. of samples which define the distance between a window and the
+following one.
+
+- n_mels: nr. frequency bins
+
+- fmax: maximum frequency to be considered for mel bins generation
+"""
+
+from librosa.feature import melspectrogram
+from librosa import power_to_db
+from librosa.display import specshow
+import numpy as np
+from cv2 import resize, INTER_NEAREST
+import matplotlib.pyplot as plt
+
+
+def get_db_mel_spectrogram(audio, n_fft, n_mels, sr):
+    """
+    Create a dB mel-spectrogram from an audio represented as a numpy array.
+    """
+
+    win_length = n_fft
+    hop_length = win_length // 2
+    fmax = 0.5 * sr
+
+    # generate spectrogram
+    mel_spec = melspectrogram(
+        y=audio,
+        sr=sr,
+        n_mels=n_mels,
+        fmax=fmax,
+        n_fft=n_fft,
+        win_length=win_length,
+        hop_length=hop_length,
+    )
+
+    # convert to Power Spectrogram by taking modulus and squaring
+    mel_spec = np.abs(mel_spec) ** 2
+
+    # convert power to dB
+    db_mel_spec = power_to_db(mel_spec)
+
+    return db_mel_spec
+
+
+def square_spectrogram(sp, size):
+    """
+    Return a new spectrogram with shape (size, size), using INTER_NEAREST
+    as interpolation method
+    """
+    return resize(sp, (size, size), interpolation=INTER_NEAREST)
+
+
+def normalize_spectrogram(sp):
+    """
+    Given a dB-spectrogram, normalize the dB in the range [0,1]
+    """
+    return (sp - np.min(sp)) / (np.max(sp) - np.min(sp))
+
+
+def shift_spectrogram(sp, shift):
+    """
+    Return a new spectrogram shifting the original one on the time axis by
+    the required amount
+    """
+    size = len(sp[1])
+    new_sp = np.zeros((size, size))
+    if shift > 0:
+        new_sp[:, shift:] = sp[:, :-shift]
+    elif shift < 0:
+        new_sp[:, :shift] = sp[:, -shift:]
+    return new_sp
+
+
+def plot_spectrogram(sp, sr, hop_length):
+    """
+    Plot mel-spectrogram
+    """
+    specshow(sp, sr=sr, hop_length=hop_length, x_axis="time", y_axis="mel")
+    plt.title("MEL scale dB-spectrogram")
+    plt.colorbar(format="%+2.0f dB")
+    plt.xlabel("time (s)")
+    plt.ylabel("frequency (Hz)")
+    plt.show()

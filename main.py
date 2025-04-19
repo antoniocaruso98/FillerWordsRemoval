@@ -220,20 +220,6 @@ def evaluate(model, criterion, loader, device, iou_threshold):
     return total_loss, accuracy
 
 
-def predictor(model, transform, device):
-    """Return a prediction function bound to the model and transform."""
-
-    def predict(tensor):
-        model.eval()
-        with torch.no_grad():
-            tensor = tensor.to(device)
-            if transform:
-                tensor = transform(tensor)
-            tensor = model(tensor.unsqueeze(0))
-            return get_likely_index(tensor).item()
-
-    return predict
-
 
 def initialize_model(num_classes, device):
     """

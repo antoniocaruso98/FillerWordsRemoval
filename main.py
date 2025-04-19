@@ -295,12 +295,14 @@ def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
 
 
 def main():
+    # Starting with always the same seed for reproducibility for weights
+    torch.manual_seed(42)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Dataset and DataLoader
-    root_folder = os.path.join("..", "clip_wav")
+    root_folder = os.path.join("..", "Dataset_completo")
     train_set = myDataset(root_folder, "train")
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
@@ -360,6 +362,7 @@ def main():
 
             # Validation on that epoch
             validation_loss, validation_accuracy = evaluate(model, criterion, validation_loader, device, iou_threshold=0.5)
+            print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
             scheduler.step()
             # Early stopping or saving the best model
             if validation_loss < best_validation_loss:

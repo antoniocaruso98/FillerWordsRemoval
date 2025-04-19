@@ -91,7 +91,7 @@ class myDataset(Dataset):
         full_label[-2] += random_number
 
         # plot the spectrogram for debug purposes
-        sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
+        #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
 
         # return (data, label)
         return (torch.tensor(spec), full_label)
@@ -190,35 +190,34 @@ def get_likely_index(tensor):
     return tensor.argmax(dim=-1)
 
 
-def test(model, criterion, test_loader, device, iou_threshold):
-    """Evaluate the model on the test set."""
+def evaluate(model, criterion, loader, device, iou_threshold):
+    """Evaluate the model on the test/validation set."""
     model.eval()
-    test_loss = 0
+    total_loss = 0
     correct = 0
-    pbar = tqdm(total=len(test_loader), desc="Testing", leave=False)
+    pbar = tqdm(total=len(loader), desc="Testing", leave=False)
 
     with torch.no_grad():
-        for data, target in test_loader:
+        for data, target in loader:
             data, target = data.to(device), target.to(device)
 
             # Forward pass
             output = model(data)
-            test_loss += criterion(output, target).item()
+            total_loss += criterion(output, target).item()
 
             # Calculate accuracy
-
             correct += number_of_correct(output, target, iou_threshold)
 
             pbar.update(1)
 
     pbar.close()
-    test_loss /= len(test_loader.dataset)
-    accuracy = 100.0 * correct / len(test_loader.dataset)
+    total_loss /= len(loader.dataset)
+    accuracy = 100.0 * correct / len(loader.dataset)
     print(
-        f"\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} "
+        f"\nTest set: Average loss: {total_loss:.4f}, Accuracy: {correct}/{len(loader.dataset)} "
         f"({accuracy:.2f}%)\n"
     )
-    return test_loss, accuracy
+    return total_loss, accuracy
 
 
 def predictor(model, transform, device):
@@ -236,41 +235,47 @@ def predictor(model, transform, device):
     return predict
 
 
-def evaluate(losses, predict, eval_set):
-    """Evaluate the model on a custom evaluation set."""
-    print("\nEvaluating on validation set...")
-    correct = 0
-
-    for i, (waveform, sample_rate, utterance, *_) in enumerate(eval_set):
-        try:
-            output = predict(waveform)
-            if output == utterance:
-                correct += 1
-                print("*", end="")
-            else:
-                print("-", end="")
-        except Exception as e:
-            print(f"Error during evaluation: {e}", end="")
-
-        if (i + 1) % 100 == 0:
-            print()
-
-    accuracy = correct / len(eval_set)
-    print(f"\nValidation set accuracy: {accuracy:.2f}")
-    return accuracy
-
-
 def initialize_model(num_classes, device):
-    """Initialize the ResNet18 model for single-channel input."""
-    model = torchvision.models.resnet18(weights=None)
-    model.conv1 = nn.Conv2d(
-        1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
+    """
+    Initialize a MobileNet model for classification and bounding box regression.
+    """
+    # Load MobileNetV2
+    mobilenet = torchvision.models.mobilenet_v2(weights=None) 
+    
+    # Modify the first convolutional layer to accept 1 input channel
+    mobilenet.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+    
+    # Modify the classifier to output 7 (classes) + 2 (bounding box regression) = 9
+    mobilenet.classifier = nn.Sequential(
+        nn.Linear(mobilenet.last_channel, 256),  # Add a hidden layer
+        nn.ReLU(),
+        nn.Dropout(0.2),
+        nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
     )
-    model.fc = nn.Linear(
-        512, num_classes, bias=True
-    )  # Adjust output layer for the number of classes
-    model = model.to(device)
-    return model
+    
+    # Move to device
+    mobilenet = mobilenet.to(device)
+    return mobilenet
+
+
+class CombinedLoss(nn.Module):
+    def __init__(self, num_classes, lambda_coord=1):
+        super(CombinedLoss, self).__init__()
+        self.num_classes = num_classes
+        self.lambda_coord = lambda_coord
+        self.class_loss_fn = nn.CrossEntropyLoss()
+        self.bb_loss_fn = nn.MSELoss()
+
+    def forward(self, output, target):
+        output_class = output[:, :self.num_classes]
+        output_bb = output[:, self.num_classes:]
+        target_class = target[:, :self.num_classes]
+        target_bb = target[:, self.num_classes:]
+
+        class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
+        bb_loss = self.bb_loss_fn(output_bb, target_bb)
+
+        return class_loss + self.lambda_coord * bb_loss
 
 
 def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device):
@@ -327,14 +332,12 @@ def main():
 
     # max learning rate
     max_lr = 0.01
-
-    # Loss function, optimizer, and scheduler
-    criterion = nn.CrossEntropyLoss()
-    optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
-
-    # nr. epochs
+    # Nr. epochs
     n_epochs = 8
 
+    # Loss function, optimizer, and scheduler
+    criterion = CombinedLoss(num_classes=num_classes)
+    optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
         max_lr=max_lr,
@@ -351,8 +354,12 @@ def main():
         f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
 
+
+    best_validation_loss = float("inf")
     with tqdm(total=n_epochs) as pbar:
         for epoch in range(1, n_epochs + 1):
+
+            # training on that epoch
             train_losses = train(
                 model,
                 criterion,
@@ -363,25 +370,31 @@ def main():
                 device,
             )
             # compute avg loss for entire epoch and add to list 'losses'
-            losses.extend(float(np.mean(train_losses)))
-            # CHANGE TO VALIDATION!
-            test(model, None, criterion, test_loader, device)
-            scheduler.step()
+            losses.append(float(np.mean(train_losses)))
 
-    # Plot the training loss
+            # Validation on that epoch
+            validation_loss, validation_accuracy = evaluate(model, criterion, validation_loader, device, iou_threshold=0.5)
+            scheduler.step()
+            # Early stopping or saving the best model
+            if validation_loss < best_validation_loss:
+                best_validation_loss = validation_loss
+                torch.save(model.state_dict(), "best_model.pth")
+
+    # Plot the average training loss per epoch
     plt.figure(figsize=(10, 6))
     plt.plot(losses, label="Training Loss")
-    plt.xlabel("Batch Index")
+    plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title("Training Loss Over Time")
+    plt.title("Training Loss Over Epochs")
     plt.legend()
     plt.grid(True)
     plt.show()
-    # Evaluate on the validation set
-    predict = predictor(model, None)
-    print("\nEvaluating on validation set...")
-    accuracy = evaluate(losses, predict, validation_set)
-    print(f"Validation set prediction accuracy: {accuracy:.2f}")
+    plt.savefig("training_loss.png")
+
+    # Final evaluation on the test set
+    test_loss, test_accuracy = evaluate(model, criterion, test_loader, device, iou_threshold=0.5)
+    print(f"Test set: Loss: {test_loss:.4f}, Accuracy: {test_accuracy:.2f}%")
+
 
 
 if __name__ == "__main__":

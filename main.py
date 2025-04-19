@@ -11,51 +11,52 @@ import librosa
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
+import spectrogram as sp
 
-class myDataset (Dataset):
-    
+
+class myDataset(Dataset):
+
     def __init__(self, root_folder: str, type: str):
         # set root folder for dataset
         self.root_folder = root_folder
         # check if train, test or validation set and
         # select appropriate annotations file
-        if type not in ['train', 'test', 'validation']:
-            type = 'train'
-        
+        if type not in ["train", "test", "validation"]:
+            type = "train"
+
         self.type = type
         match self.type:
-            case 'train':
-                labels_file = 'PodcastFillers_train_labels_shuffled.csv'
-            case 'test':
-                labels_file = 'PodcastFillers_test_labels_shuffled.csv'
-            case 'validation':
-                labels_file = 'PodcastFillers_validation_labels_shuffled.csv'
+            case "train":
+                labels_file = "PodcastFillers_train_labels_shuffled.csv"
+            case "test":
+                labels_file = "PodcastFillers_test_labels_shuffled.csv"
+            case "validation":
+                labels_file = "PodcastFillers_validation_labels_shuffled.csv"
         self.labels_file_path = labels_file
 
         # full path to data folder
         self.data_folder = os.path.join(root_folder, type)
-        
+
         # read labels file inside a Pandas Dataframe
         self.labels_df = pd.read_csv(self.labels_file_path)
         # list all unique classes (column: 'label')
-        self.classes_list = self.labels_df['label'].unique().tolist()
+        self.classes_list = self.labels_df["label"].unique().tolist()
 
         # associate each class name to an integer in the range [0, n-1]
         # for fast access Class name --> Class index
         self.classes_dict = {}
-        for (i, e) in enumerate(self.classes_list):
-            self.classes_dict.update({e : i})
-    
+        for i, e in enumerate(self.classes_list):
+            self.classes_dict.update({e: i})
+
     def __getitem__(self, index):
         # read row 'index' from the Dataframe
         line = self.labels_df.iloc[index]
         # extract raw string label
-        label_str = line['label']
+        label_str = line["label"]
         # extract delta_t
-        delta_t = line['delta_t']
+        delta_t = line["delta_t"]
         # extract center_t
-        center_t = line['center_t']
+        center_t = line["center_t"]
         # convert raw string to number
         label_nr = self.classes_dict[label_str]
         # convert label using one-hot encoding
@@ -65,79 +66,48 @@ class myDataset (Dataset):
         full_label = torch.cat((label_one_hot, torch.tensor([center_t, delta_t])))
 
         # now reading actual data from file
-        clip_name = self.labels_df['clip_name'].iloc[index]
+        clip_name = self.labels_df["clip_name"].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
-        
+
         # creating LOG-MEL spectrogram
-        
-        # define window length = nr. samples in time/frequency
         n_fft = 512
-        win_length = n_fft
-        # define hop length
-        hop_length = win_length // 2
-        # define n_mels = nr. frequency bins
         n_mels = 128
-        # define maximum frequency = 0.5 * sampling rate
-        fmax = 0.5 * sr
-        
-        # generate spectrogram
-        mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=n_mels, fmax=fmax, n_fft=n_fft,
-                                          win_length=win_length, hop_length=hop_length)
-        
-        # convert to Power Spectrogram by taking modulus and squaring
-        mel_spec = np.abs(mel_spec) ** 2
-        # convert power to dB
-        db_mel_spec = librosa.power_to_db(mel_spec)
+        spec = sp.get_db_mel_spectrogram(audio, n_fft=n_fft, n_mels=n_mels, sr=sr)
 
-        # the spectrogram must now be converted to a square image (size x size)
+        # converting spectrogram to a square image (size x size)
         size = 224
-        db_mel_spec = cv2.resize(db_mel_spec, (size, size), interpolation=cv2.INTER_NEAREST)
-        
-        # normalize the spectrogram to [0, 1]
-        db_mel_spec = (db_mel_spec - np.min(db_mel_spec)) / (np.max(db_mel_spec) - np.min(db_mel_spec))
+        spec = sp.square_spectrogram(spec, size)
 
-        # generate a random number between -0.5 and 0.5
-        # to be used for data augmentation
-        random_number =  np.random.uniform(-0.5, 0.5)
-        # shift the spectrogram by a quantity proportional to the random number on time axis
-        # and add the random number to the center_t value. Fill the rest of the
-        # spectrogram with 0s.
+        # normalize the spectrogram values to [0, 1]
+        spec = sp.normalize_spectrogram(spec)
+
+        # shift spectrogram on time axis by random amount (+- half size).
+        # The remaining part is filled with 0s
+        random_number = np.random.uniform(-0.5, 0.5)
         shift = int(random_number * size)
-        # apply the shift to the spectrogram
-        new_spectrogram = np.zeros((size, size))
-        if shift > 0:
-            new_spectrogram[:, shift:] = db_mel_spec[:, :-shift]
-        elif shift < 0:
-            new_spectrogram[:, :shift] = db_mel_spec[:, -shift:]
-
-        db_mel_spec = new_spectrogram
+        spec = sp.shift_spectrogram(spec, shift)
 
         # update the center_t label
         full_label[-2] += random_number
 
         # plot the spectrogram for debug purposes
-        
-        #librosa.display.specshow(db_mel_spec, sr=sr, hop_length=hop_length, x_axis='time', y_axis='mel')
-        #plt.title('MEL scale dB-spectrogram')
-        #plt.colorbar(format='%+2.0f dB')
-        #plt.xlabel('time (s)')
-        #plt.ylabel('frequency (Hz)')
-        #plt.show()
-        
-        
+        sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
+
         # return (data, label)
-        return (torch.tensor(db_mel_spec,dtype=torch.float32).unsqueeze(0), torch.tensor(label_nr, dtype=torch.long))
-    
+        return (torch.tensor(spec), full_label)
+
     def __len__(self):
-        return len(self.labels_df)      
+        return len(self.labels_df)
 
 
-def train(model, transform, criterion, optimizer, epoch, log_interval, train_loader, device):
+def train(
+    model, transform, criterion, optimizer, epoch, log_interval, train_loader, device
+):
     """Train the model for one epoch."""
     model.train()
     losses = []
     pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch}", leave=False)
-    
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
@@ -145,7 +115,9 @@ def train(model, transform, criterion, optimizer, epoch, log_interval, train_loa
         if transform:
             data = transform(data)
 
-        # Forward pass
+        # apply transform and model on whole batch directly on device
+        if transform != None:
+            data = transform(data)
         output = model(data)
         loss = criterion(output, target)
 
@@ -156,8 +128,10 @@ def train(model, transform, criterion, optimizer, epoch, log_interval, train_loa
 
         # Log training stats
         if batch_idx % log_interval == 0:
-            print(f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} "
-                  f"({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}")
+            print(
+                f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} "
+                f"({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}"
+            )
 
         # Update progress bar and record loss
         pbar.update(1)
@@ -204,14 +178,17 @@ def test(model, transform, criterion, test_loader, device):
 
     pbar.close()
     test_loss /= len(test_loader.dataset)
-    accuracy = 100. * correct / len(test_loader.dataset)
-    print(f"\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} "
-          f"({accuracy:.2f}%)\n")
+    accuracy = 100.0 * correct / len(test_loader.dataset)
+    print(
+        f"\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} "
+        f"({accuracy:.2f}%)\n"
+    )
     return test_loss, accuracy
 
 
 def predictor(model, transform, device):
     """Return a prediction function bound to the model and transform."""
+
     def predict(tensor):
         model.eval()
         with torch.no_grad():
@@ -220,6 +197,7 @@ def predictor(model, transform, device):
                 tensor = transform(tensor)
             tensor = model(tensor.unsqueeze(0))
             return get_likely_index(tensor).item()
+
     return predict
 
 
@@ -233,9 +211,9 @@ def evaluate(losses, predict, eval_set):
             output = predict(waveform)
             if output == utterance:
                 correct += 1
-                print('*', end="")
+                print("*", end="")
             else:
-                print('-', end="")
+                print("-", end="")
         except Exception as e:
             print(f"Error during evaluation: {e}", end="")
 
@@ -250,8 +228,12 @@ def evaluate(losses, predict, eval_set):
 def initialize_model(num_classes, device):
     """Initialize the ResNet18 model for single-channel input."""
     model = torchvision.models.resnet18(weights=None)
-    model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-    model.fc = nn.Linear(512, num_classes, bias=True)  # Adjust output layer for the number of classes
+    model.conv1 = nn.Conv2d(
+        1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False
+    )
+    model.fc = nn.Linear(
+        512, num_classes, bias=True
+    )  # Adjust output layer for the number of classes
     model = model.to(device)
     return model
 
@@ -279,20 +261,21 @@ def prepare_dataloaders(train_set, test_set, batch_size, device):
     return train_loader, test_loader
 
 
-
 def main():
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Dataset and DataLoader
-    root_folder = os.path.join('..', 'clip_wav')
-    train_set = myDataset(root_folder, 'train')
-    test_set = myDataset(root_folder, 'test')
-    valid_set = myDataset(root_folder, 'validation')
+    root_folder = os.path.join("..", "clip_wav")
+    train_set = myDataset(root_folder, "train")
+    test_set = myDataset(root_folder, "test")
+    valid_set = myDataset(root_folder, "validation")
 
     batch_size = 256
-    train_loader, test_loader = prepare_dataloaders(train_set, test_set, batch_size, device)
+    train_loader, test_loader = prepare_dataloaders(
+        train_set, test_set, batch_size, device
+    )
 
     # Model initialization
     num_classes = len(train_set.classes_list)
@@ -308,7 +291,7 @@ def main():
         max_lr=0.001,
         steps_per_epoch=len(train_loader),
         epochs=2,
-        anneal_strategy='linear'
+        anneal_strategy="linear",
     )
 
     # Training and evaluation
@@ -316,21 +299,32 @@ def main():
     log_interval = 20
     losses = []
 
-    print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(
+        f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
+    )
 
     with tqdm(total=n_epoch) as pbar:
         for epoch in range(1, n_epoch + 1):
-            train_losses = train(model, None, criterion, optimizer, epoch, log_interval, train_loader, device)
+            train_losses = train(
+                model,
+                None,
+                criterion,
+                optimizer,
+                epoch,
+                log_interval,
+                train_loader,
+                device,
+            )
             losses.extend(train_losses)
             test(model, None, criterion, test_loader, device)
             scheduler.step()
 
     # Plot the training loss
     plt.figure(figsize=(10, 6))
-    plt.plot(losses, label='Training Loss')
-    plt.xlabel('Batch Index')
-    plt.ylabel('Loss')
-    plt.title('Training Loss Over Time')
+    plt.plot(losses, label="Training Loss")
+    plt.xlabel("Batch Index")
+    plt.ylabel("Loss")
+    plt.title("Training Loss Over Time")
     plt.legend()
     plt.grid(True)
     plt.show()
@@ -341,12 +335,5 @@ def main():
     print(f"Validation set prediction accuracy: {accuracy:.2f}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
-
-
-
-
-
-

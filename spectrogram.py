@@ -68,7 +68,12 @@ def normalize_spectrogram(sp):
     """
     Given a dB-spectrogram, normalize the dB in the range [0,1]
     """
-    return (sp - np.min(sp)) / (np.max(sp) - np.min(sp))
+    min_val = np.min(sp)
+    max_val = np.max(sp)
+    if max_val == min_val:
+        # Evita la divisione per zero restituendo uno spettrogramma uniforme
+        return np.zeros_like(sp)
+    return (sp - min_val) / (max_val - min_val)
 
 
 def shift_spectrogram(sp, shift):

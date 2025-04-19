@@ -94,7 +94,7 @@ class myDataset(Dataset):
         #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
 
         # return (data, label)
-        return (torch.tensor(spec), full_label)
+        return (torch.tensor(spec).unsqueeze(0).float(), full_label.float())
 
     def __len__(self):
         return len(self.labels_df)
@@ -335,7 +335,7 @@ def main():
     )
 
     # Training and evaluation
-    log_interval = 20
+    log_interval = train_set.__len__()/batch_size/100 #stampa ogni 1%
     losses = []
 
     print(

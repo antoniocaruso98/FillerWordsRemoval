@@ -100,9 +100,7 @@ class myDataset(Dataset):
         return len(self.labels_df)
 
 
-def train(
-    model, transform, criterion, optimizer, epoch, log_interval, train_loader, device
-):
+def train(model, criterion, optimizer, epoch, log_interval, train_loader, device):
     """Train the model for one epoch."""
     model.train()
     losses = []
@@ -111,13 +109,6 @@ def train(
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
-        # Apply transform if provided
-        if transform:
-            data = transform(data)
-
-        # apply transform and model on whole batch directly on device
-        if transform != None:
-            data = transform(data)
         output = model(data)
         loss = criterion(output, target)
 
@@ -141,9 +132,57 @@ def train(
     return losses
 
 
-def number_of_correct(pred, target):
+def number_of_correct(output, target, iou_threshold):
     """Count the number of correct predictions."""
-    return pred.eq(target).sum().item()
+
+    # discard last two columns in 'output' and 'target'
+    # because they do not represent classes but bounding
+    # box coordinates.
+    predicted_class = get_likely_index(output[:, 0:-2])
+    effective_class = get_likely_index(target[:, 0:-2])
+
+    # Check for each element of the batch if the prediction is correct
+    equal = predicted_class.eq(effective_class)
+
+    # Only for correct class predictions, compute IoU
+    # select only last two columns which contain bounding box coordinates
+    output_bounding_box = output[equal, -2:]
+    target_bounding_box = target[equal, -2:]
+
+    iou = intersection_over_union(output_bounding_box, target_bounding_box)
+
+    return (iou >= iou_threshold).int().sum().item()
+
+
+def intersection_over_union(output_bb, target_bb):
+    """
+    return a tensor containing iou between output and target
+    bounding boxes for each sample.
+    """
+    # convert from (center_t, delta_t) to (start, end)
+    output_se = torch.zeros_like(output_bb)
+    target_se = torch.zeros_like(target_bb)
+
+    output_se[:, 0] = output_bb[:, 0] - output_bb[:, 1] / 2
+    output_se[:, 1] = output_bb[:, 0] + output_bb[:, 1] / 2
+
+    target_se[:, 0] = target_bb[:, 0] - target_bb[:, 1] / 2
+    target_se[:, 1] = target_bb[:, 0] + target_bb[:, 1] / 2
+
+    # For each sample, compute intersection (col 0) and union (col 1)
+    result = torch.zeros_like(output_bb)
+
+    min_start = torch.min(output_se[:, 0], target_se[:, 0])
+    max_start = torch.max(output_se[:, 0], target_se[:, 0])
+    min_end = torch.min(output_se[:, 1], target_se[:, 1])
+    max_end = torch.max(output_se[:, 1], target_se[:, 1])
+
+    zeros = torch.zeros_like(result[:, 0])
+
+    result[:, 0] = torch.max(zeros, min_end - max_start)
+    result[:, 1] = max_end - min_start
+
+    return result[:, 0] / result[:, 1]
 
 
 def get_likely_index(tensor):
@@ -151,7 +190,7 @@ def get_likely_index(tensor):
     return tensor.argmax(dim=-1)
 
 
-def test(model, transform, criterion, test_loader, device):
+def test(model, criterion, test_loader, device, iou_threshold):
     """Evaluate the model on the test set."""
     model.eval()
     test_loss = 0
@@ -162,17 +201,13 @@ def test(model, transform, criterion, test_loader, device):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
 
-            # Apply transform if provided
-            if transform:
-                data = transform(data)
-
             # Forward pass
             output = model(data)
             test_loss += criterion(output, target).item()
 
             # Calculate accuracy
-            pred = get_likely_index(output)
-            correct += number_of_correct(pred, target)
+
+            correct += number_of_correct(output, target, iou_threshold)
 
             pbar.update(1)
 
@@ -238,7 +273,7 @@ def initialize_model(num_classes, device):
     return model
 
 
-def prepare_dataloaders(train_set, test_set, batch_size, device):
+def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device):
     """Prepare DataLoader objects for training and testing."""
     num_workers = 1 if device == "cuda" else 0
     pin_memory = device == "cuda"
@@ -254,11 +289,18 @@ def prepare_dataloaders(train_set, test_set, batch_size, device):
         test_set,
         batch_size=batch_size,
         shuffle=False,
-        drop_last=False,
         num_workers=num_workers,
         pin_memory=pin_memory,
     )
-    return train_loader, test_loader
+    validation_loader = DataLoader(
+        validation_set,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+    )
+
+    return train_loader, test_loader, validation_loader
 
 
 def main():
@@ -270,11 +312,11 @@ def main():
     root_folder = os.path.join("..", "clip_wav")
     train_set = myDataset(root_folder, "train")
     test_set = myDataset(root_folder, "test")
-    valid_set = myDataset(root_folder, "validation")
+    validation_set = myDataset(root_folder, "validation")
 
-    batch_size = 256
-    train_loader, test_loader = prepare_dataloaders(
-        train_set, test_set, batch_size, device
+    batch_size = 64
+    train_loader, test_loader, validation_loader = prepare_dataloaders(
+        train_set, test_set, validation_set, batch_size, device
     )
 
     # Model initialization
@@ -283,19 +325,25 @@ def main():
     print(model)
     summary(model, (1, 224, 224))
 
+    # max learning rate
+    max_lr = 0.01
+
     # Loss function, optimizer, and scheduler
     criterion = nn.CrossEntropyLoss()
-    optimizer = Adam(model.parameters(), lr=0.01, weight_decay=0.0001)
+    optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
+
+    # nr. epochs
+    n_epochs = 8
+
     scheduler = OneCycleLR(
         optimizer,
-        max_lr=0.001,
+        max_lr=max_lr,
         steps_per_epoch=len(train_loader),
-        epochs=2,
+        epochs=n_epochs,
         anneal_strategy="linear",
     )
 
     # Training and evaluation
-    n_epoch = 2
     log_interval = 20
     losses = []
 
@@ -303,11 +351,10 @@ def main():
         f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
 
-    with tqdm(total=n_epoch) as pbar:
-        for epoch in range(1, n_epoch + 1):
+    with tqdm(total=n_epochs) as pbar:
+        for epoch in range(1, n_epochs + 1):
             train_losses = train(
                 model,
-                None,
                 criterion,
                 optimizer,
                 epoch,
@@ -315,7 +362,9 @@ def main():
                 train_loader,
                 device,
             )
-            losses.extend(train_losses)
+            # compute avg loss for entire epoch and add to list 'losses'
+            losses.extend(float(np.mean(train_losses)))
+            # CHANGE TO VALIDATION!
             test(model, None, criterion, test_loader, device)
             scheduler.step()
 
@@ -331,7 +380,7 @@ def main():
     # Evaluate on the validation set
     predict = predictor(model, None)
     print("\nEvaluating on validation set...")
-    accuracy = evaluate(losses, predict, valid_set)
+    accuracy = evaluate(losses, predict, validation_set)
     print(f"Validation set prediction accuracy: {accuracy:.2f}")
 
 

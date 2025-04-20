@@ -12,6 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 import spectrogram as sp
+from sklearn.metrics import classification_report, confusion_matrix
 
 
 class myDataset(Dataset):
@@ -132,7 +133,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
     return losses
 
 
-def number_of_correct(output, target, iou_threshold):
+def number_of_correct(output, target, iou_threshold,negative_class_index):
     """Count the number of correct predictions."""
 
     # discard last two columns in 'output' and 'target'
@@ -144,14 +145,19 @@ def number_of_correct(output, target, iou_threshold):
     # Check for each element of the batch if the prediction is correct
     equal = predicted_class.eq(effective_class)
 
-    # Only for correct class predictions, compute IoU
+    # Counting negative class correct predictions
+    negative_class_mask = predicted_class.eq(negative_class_index)
+    negative_correct = equal[negative_class_mask].sum().item()
+
+    # Only for correct class predictions of positives, compute IoU
+    # The rest is 0.0 and remains 0.0 (IoU=0.0)
     # select only last two columns which contain bounding box coordinates
     output_bounding_box = output[equal, -2:]
     target_bounding_box = target[equal, -2:]
 
     iou = intersection_over_union(output_bounding_box, target_bounding_box)
 
-    return (iou >= iou_threshold).int().sum().item()
+    return (iou >= iou_threshold).int().sum().item() + negative_correct
 
 
 def intersection_over_union(output_bb, target_bb):
@@ -190,11 +196,13 @@ def get_likely_index(tensor):
     return tensor.argmax(dim=-1)
 
 
-def evaluate(model, criterion, loader, device, iou_threshold):
-    """Evaluate the model on the test/validation set."""
+def evaluate(model, criterion, loader, device, iou_threshold, negative_class_index):
+    """Evaluate the model on the test/validation set with detailed metrics."""
     model.eval()
     total_loss = 0
     correct = 0
+    all_targets = []
+    all_predictions = []
     pbar = tqdm(total=len(loader), desc="Testing", leave=False)
 
     with torch.no_grad():
@@ -205,20 +213,38 @@ def evaluate(model, criterion, loader, device, iou_threshold):
             output = model(data)
             total_loss += criterion(output, target).item()
 
-            # Calculate accuracy
-            correct += number_of_correct(output, target, iou_threshold)
+            # Use number_of_correct to calculate correct predictions
+            correct += number_of_correct(output, target, iou_threshold, negative_class_index)
+
+            # Collect predictions and targets for metrics
+            predicted_class = get_likely_index(output[:, :-2])
+            true_class = get_likely_index(target[:, :-2])
+            all_predictions.extend(predicted_class.cpu().numpy())
+            all_targets.extend(true_class.cpu().numpy())
 
             pbar.update(1)
 
     pbar.close()
     total_loss /= len(loader.dataset)
-    accuracy = 100.0 * correct / len(loader.dataset)
-    print(
-        f"\nTest set: Average loss: {total_loss:.4f}, Accuracy: {correct}/{len(loader.dataset)} "
-        f"({accuracy:.2f}%)\n"
-    )
-    return total_loss, accuracy
 
+    # Generate classification report
+    report = classification_report(
+        all_targets,
+        all_predictions,
+        target_names=[f"Class {i}" for i in range(len(set(all_targets)))],
+        zero_division=0
+    )
+    print("\nClassification Report:\n", report)
+
+    # Generate confusion matrix
+    conf_matrix = confusion_matrix(all_targets, all_predictions)
+    print("\nConfusion Matrix:\n", conf_matrix)
+
+    # Calculate accuracy
+    accuracy = 100.0 * correct / len(loader.dataset)
+    print(f"\nAccuracy: {accuracy:.2f}%")
+
+    return total_loss, accuracy, report
 
 
 def initialize_model(num_classes, device):
@@ -259,7 +285,16 @@ class CombinedLoss(nn.Module):
         target_bb = target[:, self.num_classes:]
 
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
-        bb_loss = self.bb_loss_fn(output_bb, target_bb)
+
+        # We want to ingnore negative class BB
+        positive_mask = target_class.argmax(dim=1) != 0  # First class is "Nonfiller"
+        if positive_mask.any():
+            output_bb = output_bb[positive_mask]
+            target_bb = target_bb[positive_mask]
+            bb_loss = self.bb_loss_fn(output_bb, target_bb)
+        else:
+            bb_loss = 0.0  # No one
+
 
         return class_loss + self.lambda_coord * bb_loss
 
@@ -295,7 +330,7 @@ def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
 
 
 def main():
-    # Starting with always the same seed for reproducibility for weights
+    # Starting with always the same seed for weights reproducibility
     torch.manual_seed(42)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -335,7 +370,7 @@ def main():
     )
 
     # Training and evaluation
-    log_interval = train_set.__len__()/batch_size/100 #stampa ogni 1%
+    log_interval = train_set.__len__()/batch_size/100 #stamp every 1%
     losses = []
 
     print(
@@ -361,7 +396,10 @@ def main():
             losses.append(float(np.mean(train_losses)))
 
             # Validation on that epoch
-            validation_loss, validation_accuracy = evaluate(model, criterion, validation_loader, device, iou_threshold=0.5)
+            validation_loss, validation_accuracy, validation_report = evaluate(
+                model, criterion, validation_loader, device, iou_threshold=0.5,
+                negative_class_index=train_set.classes_dict["Nonfiller"]
+            )
             print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
             scheduler.step()
             # Early stopping or saving the best model
@@ -381,7 +419,10 @@ def main():
     plt.savefig("training_loss.png")
 
     # Final evaluation on the test set
-    test_loss, test_accuracy = evaluate(model, criterion, test_loader, device, iou_threshold=0.5)
+    test_loss, test_accuracy, test_report = evaluate(
+        model, criterion, test_loader, device, iou_threshold=0.5,
+        negative_class_index=train_set.classes_dict["Nonfiller"]
+    )
     print(f"Test set: Loss: {test_loss:.4f}, Accuracy: {test_accuracy:.2f}%")
 
 

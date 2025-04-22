@@ -2,4 +2,7 @@
 batch_size = 64
 max_lr = 0.01
 n_epochs = 1
+lambda_coord=1
 loss con conteggio anche se tutti di classe negativa
+**prova2.pth
+prova1 allenato per una seconda epoca

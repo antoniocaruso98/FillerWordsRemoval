@@ -93,7 +93,7 @@ class myDataset(Dataset):
         full_label[-2] += random_number
 
         # plot the spectrogram for debug purposes
-        sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
+        #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
 
         # return (data, label)
         return (torch.tensor(spec).unsqueeze(0).float(), full_label.float())
@@ -439,8 +439,8 @@ def main():
 
 
 if __name__ == "__main__":
-    #main()
-    root_folder = os.path.join("..", "Dataset_completo")
-    test_set = myDataset(root_folder, "test")
-    test_set[10]
+    main()
+    #root_folder = os.path.join("..", "Dataset_completo")
+    #test_set = myDataset(root_folder, "test")
+    #test_set[10]
     

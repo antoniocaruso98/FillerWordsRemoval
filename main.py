@@ -102,7 +102,7 @@ class myDataset(Dataset):
         return len(self.labels_df)
 
 
-def train(model, criterion, optimizer, epoch, log_interval, train_loader, device):
+def train(model, criterion, optimizer, epoch, log_interval, train_loader, device, scheduler):
     """Train the model for one epoch."""
     model.train()
     losses = []
@@ -118,6 +118,9 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # Update the learning rate scheduler
+        scheduler.step()
 
         # Log training stats
         if batch_idx % log_interval == 0:
@@ -151,7 +154,6 @@ def number_of_correct(output, target, iou_threshold,negative_class_index):
     negative_correct = equal[negative_class_mask].sum().item()
 
     # Only for correct class predictions of positives, compute IoU
-    # The rest is 0.0 and remains 0.0 (IoU=0.0)
     # select only last two columns which contain bounding box coordinates
     output_bounding_box = output[equal, -2:]
     target_bounding_box = target[equal, -2:]
@@ -369,7 +371,7 @@ def main():
     # Loss function, optimizer, and scheduler
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor([6000,586,736,274,293,562,67,135], dtype=torch.float32)
-    class_weights = torch.tensor(1.0 / class_counts, dtype=torch.float32).to(device)
+    class_weights = (1.0 / class_counts).to(device)
     criterion = CombinedLoss(num_classes=num_classes, class_weights=class_weights)
     optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
@@ -402,6 +404,7 @@ def main():
                 log_interval,
                 train_loader,
                 device,
+                scheduler,
             )
             # compute avg loss for entire epoch and add to list 'losses'
             losses.append(float(np.mean(train_losses)))
@@ -412,7 +415,6 @@ def main():
                 negative_class_index=train_set.classes_dict["Nonfiller"]
             )
             print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
-            scheduler.step()
             # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
@@ -443,4 +445,4 @@ if __name__ == "__main__":
     #root_folder = os.path.join("..", "Dataset_completo")
     #test_set = myDataset(root_folder, "test")
     #test_set[10]
-    
+

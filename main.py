@@ -17,7 +17,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 class myDataset(Dataset):
 
-    def __init__(self, root_folder: str, type: str):
+    def __init__(self, root_folder: str, type: str, classes_list=None):
         # set root folder for dataset
         self.root_folder = root_folder
         # check if train, test or validation set and
@@ -41,13 +41,15 @@ class myDataset(Dataset):
         # read labels file inside a Pandas Dataframe
         self.labels_df = pd.read_csv(self.labels_file_path)
         # list all unique classes (column: 'label')
-        self.classes_list = self.labels_df["label"].unique().tolist()
+        if classes_list is None:
+            self.classes_list = self.labels_df["label"].unique().tolist()
+        else:
+            self.classes_list = classes_list
 
         # associate each class name to an integer in the range [0, n-1]
         # for fast access Class name --> Class index
-        self.classes_dict = {}
-        for i, e in enumerate(self.classes_list):
-            self.classes_dict.update({e: i})
+        self.classes_dict = {e: i for i, e in enumerate(self.classes_list)}
+
 
     def __getitem__(self, index):
         # read row 'index' from the Dataframe
@@ -250,27 +252,43 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     return total_loss, accuracy, report
 
 
-def initialize_model(num_classes, device):
+def initialize_model(architecture,num_classes, device):
     """
     Initialize a ResNet model for classification and bounding box regression.
     """
-    # Load ResNet18
-    resnet = torchvision.models.resnet18(weights=None)
+    if architecture == "ResNet":
+        # Load ResNet18
+        model = torchvision.models.resnet18(weights=None)
     
-    # Modify the first convolutional layer to accept 1 input channel
-    resnet.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+        # Modify the first convolutional layer to accept 1 input channel
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     
-    # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
-    resnet.fc = nn.Sequential(
-        nn.Linear(resnet.fc.in_features, 256),  # Add a hidden layer
-        nn.ReLU(),
-        nn.Dropout(0.2),
-        nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
-    )
-    
+        # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
+        model.fc = nn.Sequential(
+            nn.Linear(resnet.fc.in_features, 256),  # Add a hidden layer
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
+        )
+    elif architecture == "MobileNet":
+        # Load MobileNetV2
+        model = torchvision.models.mobilenet_v2(weights=None)
+        
+        # Modify the first convolutional layer to accept 1 input channel
+        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        
+        # Modify the classifier to output num_classes + 2 (bounding box regression)
+        model.classifier = nn.Sequential(
+            nn.Linear(model.last_channel, 256),  # Add a hidden layer
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes + 2)  # Output: num_classes + 2 for bounding box regression
+        )
+    else:
+        print("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
     # Move to device
-    resnet = resnet.to(device)
-    return resnet
+    model = model.to(device)
+    return model
 
 
 class CombinedLoss(nn.Module):
@@ -341,9 +359,15 @@ def main():
 
     # Dataset and DataLoader
     root_folder = os.path.join("..", "Dataset_completo")
+    
+    # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
-    test_set = myDataset(root_folder, "test")
-    validation_set = myDataset(root_folder, "validation")
+    class_order = train_set.classes_list  # Save the class order from the training set
+    print(f"Class order (from training set): {class_order}")
+
+    # Apply the same class order to validation and test datasets
+    test_set = myDataset(root_folder, "test", classes_list=class_order)
+    validation_set = myDataset(root_folder, "validation", classes_list=class_order)
 
     batch_size = 64
     train_loader, test_loader, validation_loader = prepare_dataloaders(
@@ -352,7 +376,8 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    model = initialize_model(num_classes, device)
+    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
+    model = initialize_model(architecture, num_classes, device)
     # Load pre-trained model if available
     best_model_path = "best_model.pth"
     if os.path.exists(best_model_path):
@@ -430,7 +455,7 @@ def main():
     plt.grid(True)
     plt.show()
     plt.savefig("training_loss.png")
-
+    
     # Final evaluation on the test set
     test_loss, test_accuracy, test_report = evaluate(
         model, criterion, test_loader, device, iou_threshold=0.5,

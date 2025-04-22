@@ -83,16 +83,17 @@ class myDataset(Dataset):
         spec = sp.normalize_spectrogram(spec)
 
         # shift spectrogram on time axis by random amount (+- half size).
-        # The remaining part is filled with 0s
+        # The remaining part is filled with noise.
         random_number = np.random.uniform(-0.5, 0.5)
         shift = int(random_number * size)
-        spec = sp.shift_spectrogram(spec, shift)
+        noise_level= sp.calculate_noise_level(audio, snr_db=30) # Mid-level noise
+        spec = sp.shift_spectrogram(spec, shift, noise_level)
 
         # update the center_t label
         full_label[-2] += random_number
 
         # plot the spectrogram for debug purposes
-        #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
+        sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
 
         # return (data, label)
         return (torch.tensor(spec).unsqueeze(0).float(), full_label.float())
@@ -249,33 +250,33 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
 
 def initialize_model(num_classes, device):
     """
-    Initialize a MobileNet model for classification and bounding box regression.
+    Initialize a ResNet model for classification and bounding box regression.
     """
-    # Load MobileNetV2
-    mobilenet = torchvision.models.mobilenet_v2(weights=None) 
+    # Load ResNet18
+    resnet = torchvision.models.resnet18(weights=None)
     
     # Modify the first convolutional layer to accept 1 input channel
-    mobilenet.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+    resnet.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     
-    # Modify the classifier to output 7 (classes) + 2 (bounding box regression) = 9
-    mobilenet.classifier = nn.Sequential(
-        nn.Linear(mobilenet.last_channel, 256),  # Add a hidden layer
+    # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
+    resnet.fc = nn.Sequential(
+        nn.Linear(resnet.fc.in_features, 256),  # Add a hidden layer
         nn.ReLU(),
         nn.Dropout(0.2),
         nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
     )
     
     # Move to device
-    mobilenet = mobilenet.to(device)
-    return mobilenet
+    resnet = resnet.to(device)
+    return resnet
 
 
 class CombinedLoss(nn.Module):
-    def __init__(self, num_classes, lambda_coord=1):
+    def __init__(self, num_classes, lambda_coord=0.5, class_weights=None):
         super(CombinedLoss, self).__init__()
         self.num_classes = num_classes
         self.lambda_coord = lambda_coord
-        self.class_loss_fn = nn.CrossEntropyLoss()
+        self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         self.bb_loss_fn = nn.MSELoss()
 
     def forward(self, output, target):
@@ -361,12 +362,15 @@ def main():
     summary(model, (1, 224, 224))
 
     # max learning rate
-    max_lr = 0.01
+    max_lr = 0.001
     # Nr. epochs
     n_epochs = 8
 
     # Loss function, optimizer, and scheduler
-    criterion = CombinedLoss(num_classes=num_classes)
+    # Calcola i pesi inversamente proporzionali alla frequenza delle classi
+    class_counts = torch.tensor([6000,586,736,274,293,562,67,135], dtype=torch.float32)
+    class_weights = torch.tensor(1.0 / class_counts, dtype=torch.float32).to(device)
+    criterion = CombinedLoss(num_classes=num_classes, class_weights=class_weights)
     optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
@@ -435,4 +439,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    #main()
+    root_folder = os.path.join("..", "Dataset_completo")
+    test_set = myDataset(root_folder, "test")
+    test_set[10]
+    

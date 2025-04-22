@@ -293,7 +293,7 @@ class CombinedLoss(nn.Module):
             target_bb = target_bb[positive_mask]
             bb_loss = self.bb_loss_fn(output_bb, target_bb)
         else:
-            bb_loss = 0.0  # No one
+            bb_loss = 0.0  # No one positive
 
 
         return class_loss + self.lambda_coord * bb_loss
@@ -350,6 +350,13 @@ def main():
     # Model initialization
     num_classes = len(train_set.classes_list)
     model = initialize_model(num_classes, device)
+    # Load pre-trained model if available
+    best_model_path = "best_model.pth"
+    if os.path.exists(best_model_path):
+        model.load_state_dict(torch.load(best_model_path, map_location=device))
+        print(f"Loaded best model from {best_model_path}")
+    else:
+        print("No pre-trained model found. Starting training from scratch.")
     print(model)
     summary(model, (1, 224, 224))
 
@@ -370,7 +377,7 @@ def main():
     )
 
     # Training and evaluation
-    log_interval = train_set.__len__()/batch_size/100 #stamp every 1%
+    log_interval = train_set.__len__()//(batch_size*100) #stamp every 1%
     losses = []
 
     print(
@@ -402,7 +409,7 @@ def main():
             )
             print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
             scheduler.step()
-            # Early stopping or saving the best model
+            # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
                 torch.save(model.state_dict(), "best_model.pth")

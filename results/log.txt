@@ -1,0 +1,5 @@
+**prova1.pth
+batch_size = 64
+max_lr = 0.01
+n_epochs = 1
+loss con conteggio anche se tutti di classe negativa

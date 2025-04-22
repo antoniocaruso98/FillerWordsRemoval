@@ -25,8 +25,7 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     validation_loss, validation_accuracy, validation_report = evaluate(
         model, criterion, validation_loader, device, iou_threshold, negative_class_index
     )
-    print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
-    print("\nDetailed Classification Report:\n", validation_report)
+
 
 # Esegui la validazione con il modello salvato
 def main():
@@ -40,7 +39,7 @@ def main():
     train_set = myDataset(root_folder, "training")
     # Supponendo che tu abbia un'istanza del dataset chiamata train_set
 
-    print(train_set.classes_dict["Nonfiller"])
+    print(train_set.classes_dict)
     test_set = myDataset(root_folder, "test")
     batch_size = 64
     _, _, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)

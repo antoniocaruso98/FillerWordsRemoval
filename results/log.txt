@@ -1,11 +1,17 @@
 **prova1.pth
 batch_size = 64
-max_lr = 0.01
+lr = 0.01
 n_epochs = 1
 lambda_coord=1
 loss con conteggio anche se tutti di classe negativa
 **prova2.pth
 prova1 allenato per una seconda epoca
 **ResNet1.pth
-max_lr = 0.01
+lr = 0.01
 lambda_coord=0.5
+**ResNet4
+lr = 0.01
+lambda_coord=1
+Data augmentation applicata (risultati scadenti)
+
+

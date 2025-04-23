@@ -493,8 +493,5 @@ def main():
 
 
 if __name__ == "__main__":
-    #main()
-    root_folder = os.path.join("..", "Dataset_completo")
-    test_set = myDataset(root_folder, "test")
-    test_set[10]
+    main()
 

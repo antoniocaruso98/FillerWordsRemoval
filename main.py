@@ -316,7 +316,7 @@ def initialize_model(architecture,num_classes, device):
 
 
 class CombinedLoss(nn.Module):
-    def __init__(self, num_classes, lambda_coord=1, class_weights=None):
+    def __init__(self, num_classes, lambda_coord=0.5, class_weights=None):
         super(CombinedLoss, self).__init__()
         self.num_classes = num_classes
         self.lambda_coord = lambda_coord
@@ -412,20 +412,20 @@ def main():
     print(model)
     summary(model, (1, 224, 224))
 
-    # max learning rate
-    max_lr = 0.01
+    # Learning rate
+    lr = 0.001
     # Nr. epochs
-    n_epochs = 8
+    n_epochs = 6
 
     # Loss function, optimizer, and scheduler
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor([6000,586,736,274,293,562,67,135], dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     criterion = CombinedLoss(num_classes=num_classes, class_weights=class_weights)
-    optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
+    optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
-        max_lr=max_lr,
+        max_lr=lr*10,
         steps_per_epoch=len(train_loader),
         epochs=n_epochs,
         anneal_strategy="linear",

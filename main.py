@@ -79,11 +79,11 @@ class myDataset(Dataset):
             
         if np.random.rand() > 0.5:  # Randomly apply pitch shifting
             n_steps = np.random.uniform(-2, 2)  # Shift pitch by -2 to +2 semitones
-            audio = librosa.effects.pitch_shift(audio, sr, n_steps=n_steps)
+            audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
         if np.random.rand() > 0.5:  # Randomly apply time stretching
             rate = np.random.uniform(0.8, 1.2)  # Stretch by 0.8x to 1.2x
-            audio = librosa.effects.time_stretch(audio, rate)
+            audio = librosa.effects.time_stretch(audio, rate=rate)
 
         if np.random.rand() > 0.5:  # Randomly add noise
             noise = np.random.normal(0, 0.005, audio.shape)

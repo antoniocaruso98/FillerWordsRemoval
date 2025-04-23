@@ -6,3 +6,6 @@ lambda_coord=1
 loss con conteggio anche se tutti di classe negativa
 **prova2.pth
 prova1 allenato per una seconda epoca
+**ResNet1.pth
+max_lr = 0.01
+lambda_coord=0.5

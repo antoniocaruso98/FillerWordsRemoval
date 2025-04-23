@@ -105,7 +105,10 @@ class myDataset(Dataset):
 
         # shift spectrogram on time axis by random amount (+- half size).
         # The remaining part is filled with noise.
-        random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
+        if 'rate' in locals(): # if it is present the time stretching, we modulate the shift
+            random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
+        else:
+            random_number = np.random.uniform(-0.5, 0.5)
         shift = int(random_number * size)
         noise_level= sp.calculate_noise_level(audio, snr_db=30) # Mid-level noise
         spec = sp.shift_spectrogram(spec, shift, noise_level)
@@ -490,8 +493,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    #root_folder = os.path.join("..", "Dataset_completo")
-    #test_set = myDataset(root_folder, "test")
-    #test_set[10]
+    #main()
+    root_folder = os.path.join("..", "Dataset_completo")
+    test_set = myDataset(root_folder, "test")
+    test_set[10]
 

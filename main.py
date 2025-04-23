@@ -84,6 +84,8 @@ class myDataset(Dataset):
         if np.random.rand() > 0.5:  # Randomly apply time stretching
             rate = np.random.uniform(0.8, 1.2)  # Stretch by 0.8x to 1.2x
             audio = librosa.effects.time_stretch(audio, rate)
+            full_label[-2] = full_label[-2] * rate
+            full_label[-1] = full_label[-1] * rate
 
         if np.random.rand() > 0.5:  # Randomly add noise
             noise = np.random.normal(0, 0.005, audio.shape)
@@ -103,7 +105,7 @@ class myDataset(Dataset):
 
         # shift spectrogram on time axis by random amount (+- half size).
         # The remaining part is filled with noise.
-        random_number = np.random.uniform(-0.5, 0.5)
+        random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
         shift = int(random_number * size)
         noise_level= sp.calculate_noise_level(audio, snr_db=30) # Mid-level noise
         spec = sp.shift_spectrogram(spec, shift, noise_level)

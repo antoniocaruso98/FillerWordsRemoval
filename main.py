@@ -72,6 +72,23 @@ class myDataset(Dataset):
         clip_name = self.labels_df["clip_name"].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
 
+        # Apply data augmentation
+        if np.random.rand() > 0.5:  # Randomly scale volume
+            gain = np.random.uniform(0.8, 1.2)  # Scale volume by 0.8x to 1.2x
+            audio = audio * gain
+            
+        if np.random.rand() > 0.5:  # Randomly apply pitch shifting
+            n_steps = np.random.uniform(-2, 2)  # Shift pitch by -2 to +2 semitones
+            audio = librosa.effects.pitch_shift(audio, sr, n_steps=n_steps)
+
+        if np.random.rand() > 0.5:  # Randomly apply time stretching
+            rate = np.random.uniform(0.8, 1.2)  # Stretch by 0.8x to 1.2x
+            audio = librosa.effects.time_stretch(audio, rate)
+
+        if np.random.rand() > 0.5:  # Randomly add noise
+            noise = np.random.normal(0, 0.005, audio.shape)
+            audio = audio + noise
+
         # creating LOG-MEL spectrogram
         n_fft = 512
         n_mels = 128
@@ -157,8 +174,8 @@ def number_of_correct(output, target, iou_threshold,negative_class_index):
 
     # Only for correct class predictions of positives, compute IoU
     # select only last two columns which contain bounding box coordinates
-    output_bounding_box = output[equal, -2:]
-    target_bounding_box = target[equal, -2:]
+    output_bounding_box = output[(equal & ~negative_class_mask), -2:]
+    target_bounding_box = target[(equal & ~negative_class_mask), -2:]
 
     iou = intersection_over_union(output_bounding_box, target_bounding_box)
 
@@ -209,6 +226,11 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     all_targets = []
     all_predictions = []
     pbar = tqdm(total=len(loader), desc="Testing", leave=False)
+    # Create a dictionary, to store classification with localization predictions
+    # It contains for each class i, (the # of correct predictions for that class + # of total predictions for that class + # of elements in the class)
+    n_classes= len(loader.dataset.classes_list)
+    dictionary= {i: [] for i in range(n_classes)}
+
 
     with torch.no_grad():
         for data, target in loader:
@@ -241,7 +263,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     )
     print("\nClassification Report:\n", report)
 
-    # Generate confusion matrix
+    # Generate classification confusion matrix
     conf_matrix = confusion_matrix(all_targets, all_predictions)
     print("\nConfusion Matrix:\n", conf_matrix)
 
@@ -265,7 +287,7 @@ def initialize_model(architecture,num_classes, device):
     
         # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
         model.fc = nn.Sequential(
-            nn.Linear(resnet.fc.in_features, 256),  # Add a hidden layer
+            nn.Linear(model.fc.in_features, 256),  # Add a hidden layer
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
@@ -292,7 +314,7 @@ def initialize_model(architecture,num_classes, device):
 
 
 class CombinedLoss(nn.Module):
-    def __init__(self, num_classes, lambda_coord=0.5, class_weights=None):
+    def __init__(self, num_classes, lambda_coord=1, class_weights=None):
         super(CombinedLoss, self).__init__()
         self.num_classes = num_classes
         self.lambda_coord = lambda_coord
@@ -389,7 +411,7 @@ def main():
     summary(model, (1, 224, 224))
 
     # max learning rate
-    max_lr = 0.001
+    max_lr = 0.01
     # Nr. epochs
     n_epochs = 8
 

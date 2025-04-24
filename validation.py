@@ -14,7 +14,7 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     """
     # Inizializza il modello
     num_classes = len(validation_loader.dataset.classes_list)
-    model = initialize_model("MobileNet",num_classes, device)
+    model = initialize_model("ResNet",num_classes, device)
 
     # Carica i pesi salvati
     model.load_state_dict(torch.load(model_path))
@@ -55,7 +55,7 @@ def main():
 
     # Percorso del modello salvato
     #model_path = "best_model.pth"
-    model_path = os.path.join("results", "prova2.pth")
+    model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
     validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)

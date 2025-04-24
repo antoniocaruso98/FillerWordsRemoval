@@ -16,7 +16,7 @@ root_folder = os.path.join("..", "Dataset_completo")
 test_set = myDataset(root_folder, "test")
 
 # Carica il campione
-index = 120  # Cambia l'indice per selezionare un campione diverso
+index = 1000  # Cambia l'indice per selezionare un campione diverso
 spec, label = test_set[index]
 clip_name = test_set.labels_df["clip_name"].iloc[index]
 audio, sr = librosa.load(os.path.join(test_set.data_folder, clip_name), sr=16000)

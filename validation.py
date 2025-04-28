@@ -34,7 +34,7 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset e DataLoader
-    root_folder = os.path.join("..", "Dataset_completo")
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
     class_order = train_set.classes_list  # Save the class order from the training set
@@ -54,8 +54,8 @@ def main():
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
     # Percorso del modello salvato
-    #model_path = "best_model.pth"
-    model_path = os.path.join("results", "ResNet4.pth")
+    model_path = "best_model.pth"
+    #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
     validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)

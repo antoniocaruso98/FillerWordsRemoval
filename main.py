@@ -28,12 +28,12 @@ class myDataset(Dataset):
         self.type = type
         match self.type:
             case "train":
-                labels_file = "PodcastFillers_train_labels_shuffled.csv"
+                labels_file = "PodcastFillers_Decentered_train_shuffled.csv"
             case "test":
-                labels_file = "PodcastFillers_test_labels_shuffled.csv"
+                labels_file = "PodcastFillers_Decentered_test_shuffled.csv"
             case "validation":
-                labels_file = "PodcastFillers_validation_labels_shuffled.csv"
-        self.labels_file_path = labels_file
+                labels_file = "PodcastFillers_Decentered_validation_shuffled.csv"
+        self.labels_file_path = os.path.join(root_folder,labels_file)
 
         # full path to data folder
         self.data_folder = os.path.join(root_folder, type)
@@ -103,7 +103,8 @@ class myDataset(Dataset):
         # normalize the spectrogram values to [0, 1]
         spec = sp.normalize_spectrogram(spec)
 
-        # shift spectrogram on time axis by random amount (+- half size).
+        
+        '''# shift spectrogram on time axis by random amount (+- half size).
         # The remaining part is filled with noise.
         if 'rate' in locals(): # if it is present the time stretching, we modulate the shift
             random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
@@ -114,7 +115,7 @@ class myDataset(Dataset):
         spec = sp.shift_spectrogram(spec, shift, noise_level)
 
         # update the center_t label
-        full_label[-2] += random_number
+        full_label[-2] += random_number'''
 
         # plot the spectrogram for debug purposes
         #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
@@ -297,6 +298,7 @@ def initialize_model(architecture,num_classes, device):
             nn.Dropout(0.2),
             nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
         )
+        print("Using ResNet18...\n")
     elif architecture == "MobileNet":
         # Load MobileNetV2
         model = torchvision.models.mobilenet_v2(weights=None)
@@ -311,6 +313,8 @@ def initialize_model(architecture,num_classes, device):
             nn.Dropout(0.2),
             nn.Linear(256, num_classes + 2)  # Output: num_classes + 2 for bounding box regression
         )
+        print("Using MobileNetv2...\n")
+
     else:
         print("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
     # Move to device
@@ -385,12 +389,16 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset and DataLoader
-    root_folder = os.path.join("..", "Dataset_completo")
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    print(f"training on {root_folder}...\n")
     
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
     class_order = train_set.classes_list  # Save the class order from the training set
+    train_set.labels_df["label"] = pd.Categorical(train_set.labels_df["label"], categories=class_order, ordered=True)
+    class_counts = train_set.labels_df["label"].value_counts(sort=False)
     print(f"Class order (from training set): {class_order}")
+    print(f'#occorrenze: {class_counts}\n')
 
     # Apply the same class order to validation and test datasets
     test_set = myDataset(root_folder, "test", classes_list=class_order)
@@ -422,7 +430,7 @@ def main():
 
     # Loss function, optimizer, and scheduler
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
-    class_counts = torch.tensor([6000,586,736,274,293,562,67,135], dtype=torch.float32)
+    class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     criterion = CombinedLoss(num_classes=num_classes, class_weights=class_weights)
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)

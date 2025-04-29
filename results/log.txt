@@ -1,17 +1,34 @@
+DATASET_COMPLETO: filler shift spectrogram + nonfiller tagliate ogni secondo su dataset diverso
 **prova1.pth
-batch_size = 64
+batch_size = 64 (migliore riscontrato)
 lr = 0.01
 n_epochs = 1
 lambda_coord=1
 loss con conteggio anche se tutti di classe negativa
 **prova2.pth
 prova1 allenato per una seconda epoca
+loss migliorata per includere solo quelli che partecipano al calcolo
 **ResNet1.pth
 lr = 0.01
 lambda_coord=0.5
+(più veloce ad addestrarsi ma più parametri)
 **ResNet4
 lr = 0.01
 lambda_coord=1
 Data augmentation applicata (risultati scadenti)
+DATASET_COMPLETO_V2: 
+**ResNet6v2
+lr = 0.001/0.01
+lambda_coord= 0.5
+Data augmentation
+CombinedLoss (problemi con regressione BB)
+**ResNet6v2+6
+quello di prima allenato per 6 epoche ulteriori
+(miglioriamo di poco -> bisogna salvare lo stato dello scheduler e ripartire da quello per le nuove epoche)
+**ResNet6v2GLobalMSE_Balanced
+lr = 0.001/0.01
+lambda_coord= 1
+Data augmentation
+GlobalMSELoss per regressione e classificazione
 
 

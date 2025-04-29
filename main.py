@@ -452,6 +452,17 @@ def main():
         print("No pre-trained model found. Starting training from scratch.\n")
     print(model)
     summary(model, (1, 224, 224))
+    start_epoch = 1
+    checkpoint_path = "checkpoint.pth"
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1  # Resume from the next epoch
+        print(f"Loaded checkpoint from {checkpoint_path}\n")
+    else:
+        print("No checkpoint found. Starting training from scratch.\n")
 
     # Learning rate
     lr = 0.001
@@ -462,8 +473,8 @@ def main():
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
-    criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights)
+    #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
+    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights)
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
@@ -484,7 +495,7 @@ def main():
 
     best_validation_loss = float("inf")
     with tqdm(total=n_epochs) as pbar:
-        for epoch in range(1, n_epochs + 1):
+        for epoch in range(start_epoch, n_epochs + 1):
 
             # training on that epoch
             train_losses = train(
@@ -510,6 +521,16 @@ def main():
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
                 torch.save(model.state_dict(), "best_model.pth")
+                # Salva il checkpoint
+                checkpoint = {
+                    'epoch': epoch,  # Salva l'epoca corrente
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict()
+                }
+                # Esporta il checkpoint in un file
+                torch.save(checkpoint, 'checkpoint.pth')
+                print(f"Checkpoint salvato all'epoca {epoch} con validation loss {validation_loss:.4f}")
 
             # Plot the average training loss per epoch
             plt.figure(figsize=(10, 6))
@@ -522,7 +543,8 @@ def main():
             plt.show(block=False)
             plt.savefig("training_loss.png")
     
-
+    
+        pbar.update(1)
     # Final evaluation on the test set
     test_loss, test_accuracy, test_report = evaluate(
         model, criterion, test_loader, device, iou_threshold=0.5,

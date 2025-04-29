@@ -1,24 +1,30 @@
-import pandas as pd
-def check_class_order(csv_files):
-    for csv_file in csv_files:
-        # Leggi il file CSV
-        df = pd.read_csv(csv_file)
-        # Ottieni l'ordine delle classi
-        class_order = df["label"].unique().tolist()
-        print(f"File: {csv_file}")
-        print(f"Class order: {class_order}")
-        print("-" * 50)
+from main import myDataset
+import os
 
-# Specifica i percorsi dei file CSV
-csv_files = [
-    "PodcastFillers_train_labels_shuffled.csv",
-    "PodcastFillers_validation_labels_shuffled.csv",
-    "PodcastFillers_test_labels_shuffled.csv"
-]
+
 
 def main():
-    # Controlla l'ordine delle classi
-    check_class_order(csv_files)
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    # Read the training dataset to get the class order
+    train_set = myDataset(root_folder, "train")
+    class_order = train_set.classes_list  # Save the class order from the training set
+    class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
+    print(f"Class order (from training set): {class_order}")
+    print(f'#occorrenze: {class_counts}\n')
+
+    # Apply the same class order to validation and test datasets
+    test_set = myDataset(root_folder, "test")
+    class_order = test_set.classes_list  # Save the class order from the training set
+    class_counts = test_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
+    print(f"Class order (from test set): {class_order}")
+    print(f'#occorrenze: {class_counts}\n')
+    validation_set = myDataset(root_folder, "validation")
+    class_order = validation_set.classes_list  # Save the class order from the training set
+    class_counts = validation_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
+    print(f"Class order (from validation set): {class_order}")
+    print(f'#occorrenze: {class_counts}\n')
+
+
 
 if __name__ == "__main__":
     main()

@@ -17,7 +17,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 class myDataset(Dataset):
 
-    def __init__(self, root_folder: str, type: str, classes_list=None):
+    def __init__(self, root_folder: str, type: str):
         # set root folder for dataset
         self.root_folder = root_folder
         # check if train, test or validation set and
@@ -40,11 +40,8 @@ class myDataset(Dataset):
 
         # read labels file inside a Pandas Dataframe
         self.labels_df = pd.read_csv(self.labels_file_path)
-        # list all unique classes (column: 'label')
-        if classes_list is None:
-            self.classes_list = self.labels_df["label"].unique().tolist()
-        else:
-            self.classes_list = classes_list
+        # list all unique classes (column: 'label') in alphabetical order
+        self.classes_list = sorted(self.labels_df["label"].unique().tolist())
 
         # associate each class name to an integer in the range [0, n-1]
         # for fast access Class name --> Class index
@@ -323,12 +320,13 @@ def initialize_model(architecture,num_classes, device):
 
 
 class CombinedLoss(nn.Module):
-    def __init__(self, num_classes, lambda_coord=0.5, class_weights=None):
+    def __init__(self, classes_list, lambda_coord=0.5, class_weights=None):
         super(CombinedLoss, self).__init__()
-        self.num_classes = num_classes
+        self.num_classes = len(classes_list)
         self.lambda_coord = lambda_coord
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         self.bb_loss_fn = nn.MSELoss()
+        self.classes_list = classes_list
 
     def forward(self, output, target):
         output_class = output[:, :self.num_classes]
@@ -339,7 +337,36 @@ class CombinedLoss(nn.Module):
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
 
         # We want to ingnore negative class BB
-        positive_mask = target_class.argmax(dim=1) != 0  # First class is "Nonfiller"
+        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller')  
+        if positive_mask.any():
+            output_bb = output_bb[positive_mask]
+            target_bb = target_bb[positive_mask]
+            bb_loss = self.bb_loss_fn(output_bb, target_bb)
+        else:
+            bb_loss = 0.0  # No one positive
+
+
+        return class_loss + self.lambda_coord * bb_loss
+    
+class GlobalMSELoss(nn.Module):
+    def __init__(self, classes_list, lambda_coord=0.5):
+        super(GlobalMSELoss, self).__init__()
+        self.num_classes = len(classes_list)
+        self.lambda_coord = lambda_coord
+        self.class_loss_fn = nn.MSELoss()
+        self.bb_loss_fn = nn.MSELoss()
+        self.classes_list = classes_list
+
+    def forward(self, output, target):
+        output_class = output[:, :self.num_classes]
+        output_bb = output[:, self.num_classes:]
+        target_class = target[:, :self.num_classes]
+        target_bb = target[:, self.num_classes:]
+
+        class_loss = self.class_loss_fn(output_class.argmax(dim=1).float(), target_class.argmax(dim=1).float())
+
+        # We want to ingnore negative class BB
+        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller') 
         if positive_mask.any():
             output_bb = output_bb[positive_mask]
             target_bb = target_bb[positive_mask]
@@ -395,14 +422,13 @@ def main():
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
     class_order = train_set.classes_list  # Save the class order from the training set
-    train_set.labels_df["label"] = pd.Categorical(train_set.labels_df["label"], categories=class_order, ordered=True)
-    class_counts = train_set.labels_df["label"].value_counts(sort=False)
+    class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
     print(f"Class order (from training set): {class_order}")
-    print(f'#occorrenze: {class_counts}\n')
+    print(f'#occorrenze train_set: {class_counts}\n')
 
     # Apply the same class order to validation and test datasets
-    test_set = myDataset(root_folder, "test", classes_list=class_order)
-    validation_set = myDataset(root_folder, "validation", classes_list=class_order)
+    test_set = myDataset(root_folder, "test")
+    validation_set = myDataset(root_folder, "validation")
 
     batch_size = 64
     train_loader, test_loader, validation_loader = prepare_dataloaders(
@@ -432,7 +458,8 @@ def main():
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
-    criterion = CombinedLoss(num_classes=num_classes, class_weights=class_weights)
+    criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
+    #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights)
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
@@ -480,17 +507,18 @@ def main():
                 best_validation_loss = validation_loss
                 torch.save(model.state_dict(), "best_model.pth")
 
-    # Plot the average training loss per epoch
-    plt.figure(figsize=(10, 6))
-    plt.plot(losses, label="Training Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss Over Epochs")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-    plt.savefig("training_loss.png")
+            # Plot the average training loss per epoch
+            plt.figure(figsize=(10, 6))
+            plt.plot(losses, label="Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title("Training Loss Over Epochs")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+            plt.savefig("training_loss.png")
     
+
     # Final evaluation on the test set
     test_loss, test_accuracy, test_report = evaluate(
         model, criterion, test_loader, device, iou_threshold=0.5,

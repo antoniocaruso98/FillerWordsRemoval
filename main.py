@@ -358,12 +358,16 @@ class GlobalMSELoss(nn.Module):
         self.classes_list = classes_list
 
     def forward(self, output, target):
-        output_class = output[:, :self.num_classes]
+
+        output_class = torch.softmax(output[:, :self.num_classes], dim=1)
+        #output_class = output[:, :self.num_classes]
         output_bb = output[:, self.num_classes:]
         target_class = target[:, :self.num_classes]
         target_bb = target[:, self.num_classes:]
 
-        class_loss = self.class_loss_fn(output_class.argmax(dim=1).float(), target_class.argmax(dim=1).float())
+        #class_loss = self.class_loss_fn(output_class.argmax(dim=1).float(), target_class.argmax(dim=1).float())
+        class_loss = self.class_loss_fn(output_class, target_class)
+
 
         # We want to ingnore negative class BB
         positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller') 
@@ -443,9 +447,9 @@ def main():
     best_model_path = "best_model.pth"
     if os.path.exists(best_model_path):
         model.load_state_dict(torch.load(best_model_path, map_location=device))
-        print(f"Loaded best model from {best_model_path}")
+        print(f"Loaded best model from {best_model_path}\n")
     else:
-        print("No pre-trained model found. Starting training from scratch.")
+        print("No pre-trained model found. Starting training from scratch.\n")
     print(model)
     summary(model, (1, 224, 224))
 
@@ -515,7 +519,7 @@ def main():
             plt.title("Training Loss Over Epochs")
             plt.legend()
             plt.grid(True)
-            plt.show()
+            plt.show(block=False)
             plt.savefig("training_loss.png")
     
 

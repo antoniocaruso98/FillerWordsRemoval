@@ -452,22 +452,43 @@ def main():
         print("No pre-trained model found. Starting training from scratch.\n")
     print(model)
     summary(model, (1, 224, 224))
+
+    lr = 0.001
+    # n_epochs: epoche aggiuntive da fare
+    n_epochs = 6
+
+    optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
+
     start_epoch = 1
-    checkpoint_path = "checkpoint.pth"
+    checkpoint_path = os.path.join("..","checkpoint.pth")
     if os.path.exists(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1  # Resume from the next epoch
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1  # Riprendi dalla prossima epoca
         print(f"Loaded checkpoint from {checkpoint_path}\n")
+        # Calcola il totale delle epoche: epoche già fatte + epoche aggiuntive
+        total_epochs = (start_epoch - 1) + n_epochs
+        # Imposta last_epoch sottraendo 1 per compensare il passo iniziale automatico
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=lr * 10,
+            steps_per_epoch=len(train_loader),
+            epochs=total_epochs,
+            anneal_strategy="linear",
+            last_epoch=(start_epoch - 1) * len(train_loader) - 1,
+        )
+        # Se vuoi, non caricare lo state_dict dello scheduler (dato che i parametri totali sono cambiati)
     else:
         print("No checkpoint found. Starting training from scratch.\n")
-
-    # Learning rate
-    lr = 0.001
-    # Nr. epochs
-    n_epochs = 6
+        total_epochs = n_epochs
+        scheduler = OneCycleLR(
+            optimizer,
+            max_lr=lr * 10,
+            steps_per_epoch=len(train_loader),
+            epochs=total_epochs,
+            anneal_strategy="linear",
+        )
 
     # Loss function, optimizer, and scheduler
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
@@ -475,14 +496,6 @@ def main():
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
     criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights)
-    optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
-    scheduler = OneCycleLR(
-        optimizer,
-        max_lr=lr*10,
-        steps_per_epoch=len(train_loader),
-        epochs=n_epochs,
-        anneal_strategy="linear",
-    )
 
     # Training and evaluation
     log_interval = train_set.__len__()//(batch_size*100) #stamp every 1%
@@ -495,7 +508,7 @@ def main():
 
     best_validation_loss = float("inf")
     with tqdm(total=n_epochs) as pbar:
-        for epoch in range(start_epoch, n_epochs + 1):
+        for epoch in range(start_epoch, start_epoch+n_epochs):
 
             # training on that epoch
             train_losses = train(

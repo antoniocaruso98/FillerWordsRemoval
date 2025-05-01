@@ -17,7 +17,8 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     model = initialize_model("ResNet",num_classes, device)
 
     # Carica i pesi salvati
-    model.load_state_dict(torch.load(model_path))
+    checkpoint = torch.load(model_path)
+    model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     print("Best model weights loaded successfully.")
 
@@ -40,25 +41,25 @@ def main():
     class_order = train_set.classes_list  # Save the class order from the training set
     print(f"Class order (from training set): {class_order}")
     # Apply the same class order to validation and test datasets
-    test_set = myDataset(root_folder, "test", classes_list=class_order)
-    validation_set = myDataset(root_folder, "validation", classes_list=class_order)
+    test_set = myDataset(root_folder, "test")
+    validation_set = myDataset(root_folder, "validation")
 
     batch_size = 64
-    _, _, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
-
+    _, test_loader, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
+   
     # Loss function
     num_classes = len(validation_set.classes_list)
-    criterion = CombinedLoss(num_classes=num_classes)
+    criterion = CombinedLoss(classes_list=class_order)
 
     # Indice della classe "Nonfiller"
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
     # Percorso del modello salvato
-    model_path = "best_model.pth"
+    model_path = os.path.join("..","Resnet18v2.pth")
     #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
-    validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)
+    validate_with_best_model(model_path, test_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)
 
 
 

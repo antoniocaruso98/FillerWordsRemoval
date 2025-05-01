@@ -71,21 +71,21 @@ class myDataset(Dataset):
 
         # Apply data augmentation
         if np.random.rand() > 0.5:  # Randomly scale volume
-            gain = np.random.uniform(0.8, 1.2)  # Scale volume by 0.8x to 1.2x
+            gain = np.random.uniform(0.9, 1.1)  # Scale volume by 0.9x to 1.1x
             audio = audio * gain
             
         if np.random.rand() > 0.5:  # Randomly apply pitch shifting
-            n_steps = np.random.uniform(-2, 2)  # Shift pitch by -2 to +2 semitones
+            n_steps = np.random.uniform(-1, 1)  # Shift pitch by -2 to +2 semitones
             audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
         if np.random.rand() > 0.5:  # Randomly apply time stretching
-            rate = np.random.uniform(0.8, 1.2)  # Stretch by 0.8x to 1.2x
+            rate = np.random.uniform(0.9, 1.1)  # Stretch by 0.8x to 1.2x
             audio = librosa.effects.time_stretch(audio, rate=rate)
             full_label[-2] = full_label[-2] * rate
             full_label[-1] = full_label[-1] * rate
 
         if np.random.rand() > 0.5:  # Randomly add noise
-            noise = np.random.normal(0, 0.005, audio.shape)
+            noise = np.random.normal(0, 0.004, audio.shape)
             audio = audio + noise
 
         # creating LOG-MEL spectrogram

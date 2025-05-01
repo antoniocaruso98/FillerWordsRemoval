@@ -520,7 +520,6 @@ def main():
             # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
-                torch.save(model.state_dict(), "best_model.pth")
                 # Salva il checkpoint
                 checkpoint = {
                     'epoch': epoch,  # Salva l'epoca corrente
@@ -529,7 +528,7 @@ def main():
                     'scheduler_state_dict': scheduler.state_dict()
                 }
                 # Esporta il checkpoint in un file
-                torch.save(checkpoint, 'checkpoint.pth')
+                torch.save(checkpoint, checkpoint_path)
                 print(f"Checkpoint salvato all'epoca {epoch} con validation loss {validation_loss:.4f}")
 
             # Plot the average training loss per epoch

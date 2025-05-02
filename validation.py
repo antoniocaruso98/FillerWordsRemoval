@@ -55,11 +55,11 @@ def main():
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
     # Percorso del modello salvato
-    model_path = os.path.join("..","Resnet18v2.pth")
+    model_path = os.path.join("..","checkpoint.pth")
     #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
-    validate_with_best_model(model_path, test_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)
+    validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.4, negative_class_index=negative_class_index)
 
 
 

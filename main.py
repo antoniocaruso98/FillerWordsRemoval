@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import spectrogram as sp
 from sklearn.metrics import classification_report, confusion_matrix
-
+import torchvision.models as models
 
 class myDataset(Dataset):
 
@@ -303,51 +303,49 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     return total_loss, accuracy, report
 
 
-def initialize_model(architecture,num_classes, device):
-    """
-    Initialize a ResNet model for classification and bounding box regression.
-    """
-    if architecture == "ResNet":
-        # Load ResNet18
-        model = torchvision.models.resnet18(weights=None)
-    
-        # Modify the first convolutional layer to accept 1 input channel
-        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-    
-        # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
-        model.fc = nn.Sequential(
-            nn.Linear(model.fc.in_features, 256),  # Add a hidden layer
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
-        )
-        print("Using ResNet18...\n")
-    elif architecture == "MobileNet":
-        # Load MobileNetV2 with pretrained weights
-        model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
+class TwoHeadedResNet(nn.Module):
+    def __init__(self, num_classes, pretrained_weights_path=None):
+        super(TwoHeadedResNet, self).__init__()
+        
+        # Load a pre-trained ResNet model
+        self.base_model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
         
         # Modify the first convolutional layer to accept 1 input channel
-        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        self.base_model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         
-        # Modify the classifier to output num_classes + 2 (bounding box regression)
-        model.classifier = nn.Sequential(
-            nn.Linear(model.last_channel, 256),  # Add a hidden layer
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, num_classes + 2)  # Output: num_classes + 2 for bounding box regression
-        )
-        
-        # Freeze all layers except the classifier for fine-tuning
-        for param in model.features.parameters():
+        # Freeze the layers for fine-tuning
+        for param in self.base_model.parameters():
             param.requires_grad = False
+        
+        # Define the classification head
+        self.classification_head = nn.Sequential(
+            nn.Linear(self.base_model.fc.in_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
+        )
+        
+        # Define the bounding box regression head
+        self.bbox_regression_head = nn.Sequential(
+            nn.Linear(self.base_model.fc.in_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, 2)  # Output: 2 for bounding box regression (center, width)
+        )
+        
+        # Replace the fully connected layer of the base model
+        self.base_model.fc = nn.Identity()  # Remove the original fully connected layer
 
-        print("Using MobileNetv2 with pretrained weights and fine-tuning...\n")
+        # Load pre-trained weights if provided
+        #if pretrained_weights_path:
+            #self.load_pretrained_weights(pretrained_weights_path)
+        
 
-    else:
-        print("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
-    # Move to device
-    model = model.to(device)
-    return model
+    def forward(self, x):
+        features = self.base_model(x)
+        class_output = self.classification_head(features)
+        bbox_output = self.bbox_regression_head(features)
+        return torch.cat((class_output, bbox_output), dim=1)  # Combine outputs
 
 
 class CombinedLoss(nn.Module):
@@ -358,6 +356,7 @@ class CombinedLoss(nn.Module):
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         self.bb_loss_fn = nn.MSELoss()
         self.classes_list = classes_list
+
 
     def forward(self, output, target):
         output_class = output[:, :self.num_classes]
@@ -473,11 +472,11 @@ def main():
     # Model initialization
     num_classes = len(train_set.classes_list)
     architecture = "MobileNet"  # Choose between "ResNet" and "MobileNet"
-    model = initialize_model(architecture, num_classes, device)
+    model = TwoHeadedResNet(num_classes).to(device)
     print(model)
     summary(model, (1, 224, 224))
 
-    lr = 0.1
+    lr = 0.001
     # n_epochs: epoche aggiuntive da fare
     n_epochs = 8
 

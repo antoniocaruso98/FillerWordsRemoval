@@ -123,7 +123,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         data, target = data.to(device), target.to(device)
 
         output = model(data)
-        loss,class_loss,bb_loss = criterion(output, target)
+        loss,class_loss,delta_loss, center_loss = criterion(output, target)
 
         # Backward pass and optimization
         optimizer.zero_grad()
@@ -137,7 +137,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         if batch_idx % log_interval == 0:
             tqdm.write(
                 f"[Epoch {epoch}] Batch {batch_idx}/{len(train_loader)} "
-                f"- Total Loss: {loss.item():.4f} | Class Loss: {class_loss.item():.4f} | BB Loss: {bb_loss.item():.4f}"
+                f"- Total Loss: {loss.item():.4f} | Class Loss: {class_loss.item():.4f} | Delta Loss: {delta_loss.item():.4f} | Center Loss: {center_loss.item():.4f}"
             )
 
         # Update progress bar and record loss
@@ -184,11 +184,11 @@ def intersection_over_union(output_bb, target_bb):
     output_se = torch.zeros_like(output_bb)
     target_se = torch.zeros_like(target_bb)
     
-    output_se[:, 0] = output_bb[:, 0] - output_bb[:, 1] / 2
-    output_se[:, 1] = output_bb[:, 0] + output_bb[:, 1] / 2
+    output_se[:, 0] = output_bb[:, 1] - output_bb[:, 0] / 2
+    output_se[:, 1] = output_bb[:, 1] + output_bb[:, 0] / 2
 
-    target_se[:, 0] = target_bb[:, 0] - target_bb[:, 1] / 2
-    target_se[:, 1] = target_bb[:, 0] + target_bb[:, 1] / 2
+    target_se[:, 0] = target_bb[:, 1] - target_bb[:, 0] / 2
+    target_se[:, 1] = target_bb[:, 1] + target_bb[:, 0] / 2
 
     # Compute intersection
     inter_start = torch.max(output_se[:, 0], target_se[:, 0])
@@ -220,6 +220,9 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     pred_durations = []
     offset_errors = []
     relative_errors = []
+    # Per MAE e MSE
+    all_output_bb = []
+    all_target_bb = []
     pbar = tqdm(total=len(loader), desc="Evaluating", leave=False)
 
     iou_list = []
@@ -230,7 +233,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
 
             # Forward pass
             output = model(data)
-            loss,class_loss,bb_loss = criterion(output, target)
+            loss,class_loss,delta_loss, center_loss = criterion(output, target)
             total_loss += loss.item()
 
             # Use number_of_correct to calculate correct predictions
@@ -245,26 +248,28 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
                 output_bb = output[positive_mask, -2:]
                 target_bb = target[positive_mask, -2:]
 
+                # Accumulate bounding box predictions and targets
+                all_output_bb.append(output_bb.cpu())
+                all_target_bb.append(target_bb.cpu())
+
                 # Transform center and width to xmin, xmax
-                output_xmin = output_bb[:, 0] - (output_bb[:, 1] / 2)
-                output_xmax = output_bb[:, 0] + (output_bb[:, 1] / 2)
-                target_xmin = target_bb[:, 0] - (target_bb[:, 1] / 2)
-                target_xmax = target_bb[:, 0] + (target_bb[:, 1] / 2)
+                output_xmin = output_bb[:, 1] - (output_bb[:, 0] / 2)
+                output_xmax = output_bb[:, 1] + (output_bb[:, 0] / 2)
+                target_xmin = target_bb[:, 1] - (target_bb[:, 0] / 2)
+                target_xmax = target_bb[:, 1] + (target_bb[:, 0] / 2)
 
                 # Calculate durations
                 pred_duration = output_xmax - output_xmin
                 true_duration = target_xmax - target_xmin
-
                 # Collect durations for metrics
                 pred_durations.extend(pred_duration.cpu().numpy())
                 all_durations.extend(true_duration.cpu().numpy())
-
                 # Calculate relative error
                 relative_error = torch.abs(pred_duration - true_duration) / true_duration
                 relative_errors.extend(relative_error.cpu().numpy())
 
                 # Calculate offset error
-                offset_error = torch.abs(output_bb[:, 0] - target_bb[:, 0])
+                offset_error = torch.abs(output_bb[:, 1] - target_bb[:, 1])
                 offset_errors.extend(offset_error.cpu().numpy())
 
                 # Calculate IoU for positive samples
@@ -295,9 +300,19 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     conf_matrix = confusion_matrix(all_targets, all_predictions)
     print("\nConfusion Matrix:\n", conf_matrix)
 
+    # MAE and MSE for center and delta
+    all_output_bb = torch.cat(all_output_bb, dim=0)
+    all_target_bb = torch.cat(all_target_bb, dim=0)
+    mae_center = mean_absolute_error(all_target_bb[:, 1].numpy(), all_output_bb[:, 1].numpy())
+    mse_center = mean_squared_error(all_target_bb[:, 1].numpy(), all_output_bb[:, 1].numpy())
+    mae_delta = mean_absolute_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
+    mse_delta = mean_squared_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
+
+    print(f"\nMAE Center: {mae_center:.4f}, MSE Center: {mse_center:.4f}")
+    print(f"MAE Delta: {mae_delta:.4f}, MSE Delta: {mse_delta:.4f}")
     # Calculate IoU accuracy
     accuracy = 100.0 * correct / positive_total
-    print(f"\nIoU Accuracy (positive classes): {accuracy:.2f}%")
+    print(f"IoU Accuracy (positive classes): {accuracy:.2f}%")
 
     # Calculate mean IoU
     mean_iou = np.mean(iou_list) if iou_list else 0.0
@@ -403,13 +418,14 @@ def initialize_model(architecture, num_classes, device):
     return combined_model
 
 class CombinedLoss(nn.Module):
-    def __init__(self, classes_list, lambda_coord=0.5, class_weights=None):
+    def __init__(self, classes_list, lambda_center, lambda_delta, class_weights=None):
         super(CombinedLoss, self).__init__()
         self.num_classes = len(classes_list)
-        self.lambda_coord = lambda_coord
+        self.lambda_center = lambda_center
+        self.lambda_delta = lambda_delta
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-        self.delta_loss_fn = nn.SmoothL1Loss()  # Loss per la larghezza (delta)
-        self.center_loss_fn = nn.SmoothL1Loss()  # Loss per il centro
+        self.delta_loss_fn = nn.SmoothL1Loss()  # Loss for delta
+        self.center_loss_fn = nn.SmoothL1Loss()  # Loss for center
         self.classes_list = classes_list
 
     def forward(self, output, target):
@@ -438,11 +454,9 @@ class CombinedLoss(nn.Module):
             delta_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
             center_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
 
-        # Combine the two regression losses
-        bb_loss = delta_loss + center_loss
         # Compute the total loss
-        total_loss= class_loss + self.lambda_coord * bb_loss
-        return total_loss,class_loss,self.lambda_coord * bb_loss
+        total_loss= class_loss + self.lambda_center *center_loss + self.lambda_delta * delta_loss
+        return total_loss, class_loss, self.lambda_delta * delta_loss, self.lambda_center *center_loss
     
 class GlobalMSELoss(nn.Module):
     def __init__(self, classes_list, lambda_coord=0.5):
@@ -493,7 +507,7 @@ def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device,
         test_set,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers/2,
+        num_workers=num_workers//2,
         pin_memory=pin_memory,
     )
     validation_loader = DataLoader(
@@ -538,7 +552,7 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
+    architecture = "MobileNet"  # Choose between "ResNet" and "MobileNet"
     model = initialize_model(architecture, num_classes, device)
     print(model)
     summary(model, (1, 224, 224))
@@ -587,8 +601,8 @@ def main():
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25*2
-    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_coord=lambda_coord)
+    lambda_coord = 25
+    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=1.5*lambda_coord, lambda_delta=15*lambda_coord)
 
     # Training and evaluation
     log_interval = len(train_loader)//100 #stamp every 1%
@@ -637,14 +651,7 @@ def main():
                 print(f"Checkpoint salvato all'epoca {epoch} con validation loss {validation_loss:.4f}")
 
             # Plot the average training loss per epoch
-            # Plot the average training loss per epoch
             plt.figure(figsize=(10, 6))
-            if os.path.exists(plot_file):
-                # Se il file esiste, carica il grafico esistente
-                img = plt.imread(plot_file)
-                plt.imshow(img, extent=[0, len(losses), min(losses), max(losses)], aspect='auto', alpha=0.3)
-                print(f"Grafico esistente caricato da {plot_file}")
-            # Aggiungi i nuovi dati al grafico
             plt.plot(range(start_epoch, start_epoch + len(losses)), losses, label="Training Loss", color="blue")
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
@@ -654,6 +661,10 @@ def main():
             # Salva il grafico aggiornato
             plt.savefig(plot_file)
             print(f"Grafico aggiornato salvato in {plot_file}")
+
+            # Monitor the learning rate
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"Current Learning Rate: {current_lr:.6f}")
     
     
         pbar.update(1)

@@ -23,7 +23,7 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     print("Best model weights loaded successfully.")
 
     # Esegui la validazione
-    validation_loss, validation_accuracy, validation_report = evaluate(
+    validation_loss = evaluate(
         model, criterion, validation_loader, device, iou_threshold, negative_class_index
     )
 
@@ -48,18 +48,22 @@ def main():
     _, test_loader, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
    
     # Loss function
-    num_classes = len(validation_set.classes_list)
-    criterion = CombinedLoss(classes_list=class_order)
+    class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
+    class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
+    class_weights = (1.0 / class_counts).to(device)
+    #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
+    lambda_coord = 25
+    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=1.5*lambda_coord, lambda_delta=15*lambda_coord)
 
     # Indice della classe "Nonfiller"
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
     # Percorso del modello salvato
-    model_path = os.path.join("..","ResNet20.pth")
+    model_path = os.path.join("..","checkpoint.pth")
     #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
-    validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.4, negative_class_index=negative_class_index)
+    validate_with_best_model(model_path, test_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)
 
 
 

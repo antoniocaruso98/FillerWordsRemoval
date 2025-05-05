@@ -376,6 +376,10 @@ def initialize_model(architecture, num_classes, device):
         # Modify the first convolutional layer to accept 1 input channel
         model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=1, bias=False)
 
+        # Freeze all layers in the feature extractor
+        for param in model.features.parameters():
+            param.requires_grad = False
+
         # Remove the original classifier
         num_features = model.last_channel
         model.classifier = nn.Identity()  # Replace with identity to extract features
@@ -394,7 +398,7 @@ def initialize_model(architecture, num_classes, device):
             nn.Linear(256, 2)  # Output: 2 for bounding box regression
         )
 
-        print("Using MobileNetV2 with two heads...\n")
+        print("Using MobileNetV2 with frozen feature extractor and two heads...\n")
 
     else:
         raise ValueError("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")

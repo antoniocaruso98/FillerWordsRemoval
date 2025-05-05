@@ -135,10 +135,9 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
 
         # Log training stats
         if batch_idx % log_interval == 0:
-            print(
-                f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} "
-                f"({100. * batch_idx / len(train_loader):.0f}%)]\t"
-                f"Total Loss: {loss.item():.6f}, Class Loss: {class_loss.item():.6f}, BB Loss: {bb_loss.item():.6f}"
+            tqdm.write(
+                f"[Epoch {epoch}] Batch {batch_idx}/{len(train_loader)} "
+                f"- Total Loss: {loss.item():.4f} | Class Loss: {class_loss.item():.4f} | BB Loss: {bb_loss.item():.4f}"
             )
 
         # Update progress bar and record loss
@@ -146,6 +145,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         losses.append(loss.item())
 
     pbar.close()
+    print(f"[Epoch {epoch}] Average Training Loss: {np.mean(losses):.4f}")
     return losses
 
 
@@ -220,7 +220,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     pred_durations = []
     offset_errors = []
     relative_errors = []
-    pbar = tqdm(total=len(loader), desc="Testing", leave=False)
+    pbar = tqdm(total=len(loader), desc="Evaluating", leave=False)
 
     iou_list = []
 
@@ -359,7 +359,7 @@ def initialize_model(architecture, num_classes, device):
         model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
 
         # Modify the first convolutional layer to accept 1 input channel
-        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=1, bias=False)
 
         # Remove the original classifier
         num_features = model.last_channel
@@ -430,7 +430,7 @@ class CombinedLoss(nn.Module):
 
 
         total_loss= class_loss + self.lambda_coord * bb_loss
-        return total_loss,class_loss,bb_loss
+        return total_loss,class_loss,self.lambda_coord * bb_loss
     
 class GlobalMSELoss(nn.Module):
     def __init__(self, classes_list, lambda_coord=0.5):
@@ -518,7 +518,7 @@ def main():
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
     # Dataloaders
-    batch_size = 128
+    batch_size = 64
     num_workers = 8 # CPU architecture
     train_loader, test_loader, validation_loader = prepare_dataloaders(
         train_set, test_set, validation_set, batch_size, device, num_workers=num_workers
@@ -526,7 +526,7 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    architecture = "MobileNet"  # Choose between "ResNet" and "MobileNet"
+    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
     model = initialize_model(architecture, num_classes, device)
     print(model)
     summary(model, (1, 224, 224))
@@ -574,11 +574,11 @@ def main():
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 50
+    lambda_coord = 25
     criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_coord=lambda_coord)
 
     # Training and evaluation
-    log_interval = train_set.__len__()//(batch_size*100*num_workers) #stamp every 1%
+    log_interval = len(train_loader)//100 #stamp every 1%
     losses = []
 
     print(
@@ -604,11 +604,11 @@ def main():
             losses.append(float(np.mean(train_losses)))
 
             # Validation on that epoch
-            validation_loss, validation_accuracy, validation_report = evaluate(
+            validation_loss = evaluate(
                 model, criterion, validation_loader, device, iou_threshold=0.5,
                 negative_class_index=train_set.classes_dict["Nonfiller"]
             )
-            print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
+            print(f"Validation set: Loss: {validation_loss:.4f}")
             # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
@@ -631,17 +631,17 @@ def main():
             plt.title("Training Loss Over Epochs")
             plt.legend()
             plt.grid(True)
-            plt.show(block=False)
+            #plt.show(block=False)
             plt.savefig("training_loss.png")
     
     
         pbar.update(1)
     # Final evaluation on the test set
-    test_loss, test_accuracy, test_report = evaluate(
+    test_loss = evaluate(
         model, criterion, test_loader, device, iou_threshold=0.5,
         negative_class_index=train_set.classes_dict["Nonfiller"]
     )
-    print(f"Test set: Loss: {test_loss:.4f}, Accuracy: {test_accuracy:.2f}%")
+    print(f"Test set: Loss: {test_loss:.4f}")
 
 
 

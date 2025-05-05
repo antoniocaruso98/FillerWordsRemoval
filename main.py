@@ -13,6 +13,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import spectrogram as sp
 from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
 
 
 class myDataset(Dataset):
@@ -69,24 +71,25 @@ class myDataset(Dataset):
         clip_name = self.labels_df["clip_name"].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
 
-        # Apply data augmentation
-        if np.random.rand() > 0.5:  # Randomly scale volume
-            gain = np.random.uniform(0.9, 1.1)  # Scale volume by 0.9x to 1.1x
-            audio = audio * gain
-            
-        if np.random.rand() > 0.5:  # Randomly apply pitch shifting
-            n_steps = np.random.uniform(-1, 1)  # Shift pitch by -2 to +2 semitones
-            audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
+        # Apply data augmentation only for training set
+        if self.type == "train":
+            if np.random.rand() > 0.5:  # Randomly scale volume
+                gain = np.random.uniform(0.9, 1.1)  # Scale volume by 0.9x to 1.1x
+                audio = audio * gain
+                
+            if np.random.rand() > 0.5:  # Randomly apply pitch shifting
+                n_steps = np.random.uniform(-1, 1)  # Shift pitch by -2 to +2 semitones
+                audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
-        if np.random.rand() > 0.5:  # Randomly apply time stretching
-            rate = np.random.uniform(0.9, 1.1)  # Stretch by 0.8x to 1.2x
-            audio = librosa.effects.time_stretch(audio, rate=rate)
-            full_label[-2] = full_label[-2] * rate
-            full_label[-1] = full_label[-1] * rate
+            if np.random.rand() > 0.5:  # Randomly apply time stretching
+                rate = np.random.uniform(0.9, 1.1)  # Stretch by 0.8x to 1.2x
+                audio = librosa.effects.time_stretch(audio, rate=rate)
+                full_label[-2] = full_label[-2] * rate
+                full_label[-1] = full_label[-1] * rate
 
-        if np.random.rand() > 0.5:  # Randomly add noise
-            noise = np.random.normal(0, 0.004, audio.shape)
-            audio = audio + noise
+            if np.random.rand() > 0.5:  # Randomly add noise
+                noise = np.random.normal(0, 0.004, audio.shape)
+                audio = audio + noise
 
         # creating LOG-MEL spectrogram
         n_fft = 512
@@ -99,20 +102,6 @@ class myDataset(Dataset):
 
         # normalize the spectrogram values to [0, 1]
         spec = sp.normalize_spectrogram(spec)
-
-        
-        '''# shift spectrogram on time axis by random amount (+- half size).
-        # The remaining part is filled with noise.
-        if 'rate' in locals(): # if it is present the time stretching, we modulate the shift
-            random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
-        else:
-            random_number = np.random.uniform(-0.5, 0.5)
-        shift = int(random_number * size)
-        noise_level= sp.calculate_noise_level(audio, snr_db=30) # Mid-level noise
-        spec = sp.shift_spectrogram(spec, shift, noise_level)
-
-        # update the center_t label
-        full_label[-2] += random_number'''
 
         # plot the spectrogram for debug purposes
         #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
@@ -134,7 +123,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         data, target = data.to(device), target.to(device)
 
         output = model(data)
-        loss = criterion(output, target)
+        loss,class_loss,bb_loss = criterion(output, target)
 
         # Backward pass and optimization
         optimizer.zero_grad()
@@ -148,7 +137,8 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         if batch_idx % log_interval == 0:
             print(
                 f"Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} "
-                f"({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}"
+                f"({100. * batch_idx / len(train_loader):.0f}%)]\t"
+                f"Total Loss: {loss.item():.6f}, Class Loss: {class_loss.item():.6f}, BB Loss: {bb_loss.item():.6f}"
             )
 
         # Update progress bar and record loss
@@ -223,18 +213,16 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     model.eval()
     total_loss = 0
     correct = 0
-    positive_total=0
+    positive_total = 0
     all_targets = []
     all_predictions = []
+    all_durations = []
+    pred_durations = []
+    offset_errors = []
+    relative_errors = []
     pbar = tqdm(total=len(loader), desc="Testing", leave=False)
-    # Create a dictionary, to store classification with localization predictions
-    # It contains for each class i, (the # of correct predictions for that class + # of total predictions for that class + # of elements in the class)
-    n_classes= len(loader.dataset.classes_list)
-    dictionary= {i: [] for i in range(n_classes)}
 
     iou_list = []
-    bb_absolute_error = []
-
 
     with torch.no_grad():
         for data, target in loader:
@@ -242,7 +230,8 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
 
             # Forward pass
             output = model(data)
-            total_loss += criterion(output, target).item()
+            loss,class_loss,bb_loss = criterion(output, target)
+            total_loss += loss.item()
 
             # Use number_of_correct to calculate correct predictions
             correct += number_of_correct(output, target, iou_threshold, negative_class_index)
@@ -250,28 +239,44 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
             # Collect predictions and targets for metrics
             predicted_class = get_likely_index(output[:, :-2])
             true_class = get_likely_index(target[:, :-2])
-            #positive_mask = (predicted_class.eq(true_class)) & (~predicted_class.eq(negative_class_index))
             positive_mask = (true_class != negative_class_index)
-            
+
             if positive_mask.any():
                 output_bb = output[positive_mask, -2:]
                 target_bb = target[positive_mask, -2:]
-                # Calcolo IoU per ogni campione e li aggiungo alla lista
-                iou_values = intersection_over_union(output_bb, target_bb)
-                # Transformo i tensor IoU in array python
-                iou_list.extend(iou_values.cpu().numpy().tolist())
-                # Calcolo l'errore assoluto medio per bounding box (sia per center che per width)
-                abs_error = torch.abs(output_bb - target_bb)
-                bb_absolute_error.extend(abs_error.mean(dim=1).cpu().numpy().tolist())
 
+                # Transform center and width to xmin, xmax
+                output_xmin = output_bb[:, 0] - (output_bb[:, 1] / 2)
+                output_xmax = output_bb[:, 0] + (output_bb[:, 1] / 2)
+                target_xmin = target_bb[:, 0] - (target_bb[:, 1] / 2)
+                target_xmax = target_bb[:, 0] + (target_bb[:, 1] / 2)
+
+                # Calculate durations
+                pred_duration = output_xmax - output_xmin
+                true_duration = target_xmax - target_xmin
+
+                # Collect durations for metrics
+                pred_durations.extend(pred_duration.cpu().numpy())
+                all_durations.extend(true_duration.cpu().numpy())
+
+                # Calculate relative error
+                relative_error = torch.abs(pred_duration - true_duration) / true_duration
+                relative_errors.extend(relative_error.cpu().numpy())
+
+                # Calculate offset error
+                offset_error = torch.abs(output_bb[:, 0] - target_bb[:, 0])
+                offset_errors.extend(offset_error.cpu().numpy())
+
+                # Calculate IoU for positive samples
+                iou_values = intersection_over_union(output_bb, target_bb)
+                iou_list.extend(iou_values.cpu().numpy().tolist())
 
             all_predictions.extend(predicted_class.cpu().numpy())
             all_targets.extend(true_class.cpu().numpy())
 
-
             all_positive_mask = (true_class != negative_class_index)
             positive_total += all_positive_mask.sum().item()
-            
+
             pbar.update(1)
 
     pbar.close()
@@ -290,65 +295,112 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     conf_matrix = confusion_matrix(all_targets, all_predictions)
     print("\nConfusion Matrix:\n", conf_matrix)
 
-    # Calculate iou accuracy
+    # Calculate IoU accuracy
     accuracy = 100.0 * correct / positive_total
     print(f"\nIoU Accuracy (positive classes): {accuracy:.2f}%")
 
-    # Calcola la media IoU e media errore bounding box se esistono campioni positivi
+    # Calculate mean IoU
     mean_iou = np.mean(iou_list) if iou_list else 0.0
-    mean_bb_error = np.mean(bb_absolute_error) if bb_absolute_error else 0.0
     print(f"Mean IoU (positives): {mean_iou:.4f}")
-    print(f"Mean Bounding Box Absolute Error: {mean_bb_error:.4f}")
 
-    return total_loss, accuracy, report
+    # Calculate relative error metrics
+    if relative_errors:
+        mean_relative_error = np.mean(relative_errors)
+        print(f"Mean Relative Error (Duration): {mean_relative_error:.4f}")
+
+    # Calculate offset error metrics
+    if offset_errors:
+        mean_offset_error = np.mean(offset_errors)
+        print(f"Mean Offset Error (Center): {mean_offset_error:.4f}")
+
+    # Calculate duration accuracy
+    if all_durations and pred_durations:
+        duration_accuracy = np.mean(
+            np.abs(np.array(pred_durations) - np.array(all_durations)) / np.array(all_durations) < 0.1
+        )
+        print(f"Duration Accuracy (within 10%): {duration_accuracy:.2f}")
+
+    return total_loss
 
 
-def initialize_model(architecture,num_classes, device):
+def initialize_model(architecture, num_classes, device):
     """
-    Initialize a ResNet model for classification and bounding box regression.
+    Initialize a model with two heads: one for classification and one for bounding box regression.
     """
     if architecture == "ResNet":
         # Load ResNet18
         model = torchvision.models.resnet18(weights=None)
-    
+
         # Modify the first convolutional layer to accept 1 input channel
         model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-    
-        # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
-        model.fc = nn.Sequential(
-            nn.Linear(model.fc.in_features, 256),  # Add a hidden layer
+
+        # Remove the original fully connected layer
+        num_features = model.fc.in_features
+        model.fc = nn.Identity()  # Replace with identity to extract features
+
+        # Add two separate heads
+        class_head = nn.Sequential(
+            nn.Linear(num_features, 256),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
         )
-        print("Using ResNet18...\n")
+        bb_head = nn.Sequential(
+            nn.Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, 2)  # Output: 2 for bounding box regression
+        )
+
+        print("Using ResNet18 with two heads...\n")
+
     elif architecture == "MobileNet":
-        # Load MobileNetV2 with pretrained weights
+        # Load MobileNetV2
         model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
-        
+
         # Modify the first convolutional layer to accept 1 input channel
         model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
-        
-        # Modify the classifier to output num_classes + 2 (bounding box regression)
-        model.classifier = nn.Sequential(
-            nn.Linear(model.last_channel, 256),  # Add a hidden layer
+
+        # Remove the original classifier
+        num_features = model.last_channel
+        model.classifier = nn.Identity()  # Replace with identity to extract features
+
+        # Add two separate heads
+        class_head = nn.Sequential(
+            nn.Linear(num_features, 256),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(256, num_classes + 2)  # Output: num_classes + 2 for bounding box regression
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
         )
-        
-        # Freeze all layers except the classifier for fine-tuning
-        for param in model.features.parameters():
-            param.requires_grad = False
+        bb_head = nn.Sequential(
+            nn.Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, 2)  # Output: 2 for bounding box regression
+        )
 
-        print("Using MobileNetv2 with pretrained weights and fine-tuning...\n")
+        print("Using MobileNetV2 with two heads...\n")
 
     else:
-        print("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
-    # Move to device
-    model = model.to(device)
-    return model
+        raise ValueError("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
 
+    # Define a combined model with two heads
+    class TwoHeadedModel(nn.Module):
+        def __init__(self, base_model, class_head, bb_head):
+            super(TwoHeadedModel, self).__init__()
+            self.base_model = base_model
+            self.class_head = class_head
+            self.bb_head = bb_head
+
+        def forward(self, x):
+            features = self.base_model(x)  # Extract shared features
+            class_output = self.class_head(features)  # Classification head
+            bb_output = self.bb_head(features)  # Bounding box regression head
+            return torch.cat((class_output, bb_output), dim=1)  # Concatenate outputs
+
+    # Instantiate the combined model and move it to the device
+    combined_model = TwoHeadedModel(model, class_head, bb_head).to(device)
+    return combined_model
 
 class CombinedLoss(nn.Module):
     def __init__(self, classes_list, lambda_coord=0.5, class_weights=None):
@@ -374,10 +426,11 @@ class CombinedLoss(nn.Module):
             target_bb = target_bb[positive_mask]
             bb_loss = self.bb_loss_fn(output_bb, target_bb)
         else:
-            bb_loss = 0.0  # No one positive
+            bb_loss = torch.tensor(0.0, device=output_bb.device, dtype=output_bb.dtype) # No one positive tensor
 
 
-        return class_loss + self.lambda_coord * bb_loss
+        total_loss= class_loss + self.lambda_coord * bb_loss
+        return total_loss,class_loss,bb_loss
     
 class GlobalMSELoss(nn.Module):
     def __init__(self, classes_list, lambda_coord=0.5):
@@ -413,9 +466,8 @@ class GlobalMSELoss(nn.Module):
         return class_loss + self.lambda_coord * bb_loss
 
 
-def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device):
+def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device, num_workers=8):
     """Prepare DataLoader objects for training and testing."""
-    num_workers = 1 if device == "cuda" else 0
     pin_memory = device == "cuda"
 
     train_loader = DataLoader(
@@ -429,45 +481,47 @@ def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
         test_set,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=num_workers/2,
         pin_memory=pin_memory,
     )
     validation_loader = DataLoader(
         validation_set,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=2,
         pin_memory=pin_memory,
     )
 
     return train_loader, test_loader, validation_loader
 
 
+
 def main():
+
     # Starting with always the same seed for weights reproducibility
     torch.manual_seed(42)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Dataset and DataLoader
+
+    # Dataset
     root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
     print(f"training on {root_folder}...\n")
-    
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
     class_order = train_set.classes_list  # Save the class order from the training set
     class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
     print(f"Class order (from training set): {class_order}")
     print(f'#occorrenze train_set: {class_counts}\n')
-
     # Apply the same class order to validation and test datasets
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
-
+    # Dataloaders
     batch_size = 128
+    num_workers = 8 # CPU architecture
     train_loader, test_loader, validation_loader = prepare_dataloaders(
-        train_set, test_set, validation_set, batch_size, device
+        train_set, test_set, validation_set, batch_size, device, num_workers=num_workers
     )
 
     # Model initialization
@@ -477,9 +531,9 @@ def main():
     print(model)
     summary(model, (1, 224, 224))
 
-    lr = 0.1
-    # n_epochs: epoche aggiuntive da fare
-    n_epochs = 8
+    lr = 0.001
+    # Nr.epochs to do
+    n_epochs = 10
 
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
 
@@ -515,21 +569,21 @@ def main():
             anneal_strategy="linear",
         )
 
-    # Loss function, optimizer, and scheduler
+    # Loss function
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_coord=2)
+    lambda_coord = 50
+    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_coord=lambda_coord)
 
     # Training and evaluation
-    log_interval = train_set.__len__()//(batch_size*100) #stamp every 1%
+    log_interval = train_set.__len__()//(batch_size*100*num_workers) #stamp every 1%
     losses = []
 
     print(
         f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
-
 
     best_validation_loss = float("inf")
     with tqdm(total=n_epochs) as pbar:

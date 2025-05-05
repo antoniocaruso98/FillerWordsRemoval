@@ -55,7 +55,7 @@ def main():
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
     # Percorso del modello salvato
-    model_path = os.path.join("..","checkpoint.pth")
+    model_path = os.path.join("..","ResNet20.pth")
     #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione

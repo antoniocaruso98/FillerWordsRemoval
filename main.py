@@ -280,7 +280,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
             pbar.update(1)
 
     pbar.close()
-    total_loss /= len(loader.dataset)
+    total_loss /= len(loader)
 
     # Generate classification report
     report = classification_report(
@@ -408,27 +408,39 @@ class CombinedLoss(nn.Module):
         self.num_classes = len(classes_list)
         self.lambda_coord = lambda_coord
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-        self.bb_loss_fn = nn.MSELoss()
+        self.delta_loss_fn = nn.SmoothL1Loss()  # Loss per la larghezza (delta)
+        self.center_loss_fn = nn.SmoothL1Loss()  # Loss per il centro
         self.classes_list = classes_list
 
     def forward(self, output, target):
         output_class = output[:, :self.num_classes]
-        output_bb = output[:, self.num_classes:]
+        output_delta = output[:, self.num_classes]  # Larghezza (delta)
+        output_center = output[:, self.num_classes + 1]  # Centro
         target_class = target[:, :self.num_classes]
-        target_bb = target[:, self.num_classes:]
+        target_delta = target[:, self.num_classes]  # Larghezza (delta)
+        target_center = target[:, self.num_classes + 1]  # Centro
+
 
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
 
         # We want to ingnore negative class BB
         positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller')  
         if positive_mask.any():
-            output_bb = output_bb[positive_mask]
-            target_bb = target_bb[positive_mask]
-            bb_loss = self.bb_loss_fn(output_bb, target_bb)
+            output_delta = output_delta[positive_mask]
+            output_center = output_center[positive_mask]
+            target_delta = target_delta[positive_mask]
+            target_center = target_center[positive_mask]
+
+            delta_loss = self.delta_loss_fn(output_delta, target_delta)
+            center_loss = self.center_loss_fn(output_center, target_center)
+
         else:
-            bb_loss = torch.tensor(0.0, device=output_bb.device, dtype=output_bb.dtype) # No one positive tensor
+            delta_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
+            center_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
 
-
+        # Combine the two regression losses
+        bb_loss = delta_loss + center_loss
+        # Compute the total loss
         total_loss= class_loss + self.lambda_coord * bb_loss
         return total_loss,class_loss,self.lambda_coord * bb_loss
     
@@ -538,6 +550,7 @@ def main():
     optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
 
     start_epoch = 1
+    plot_file = "training_loss.png"
     checkpoint_path = os.path.join("..","checkpoint.pth")
     if os.path.exists(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location=device)
@@ -569,12 +582,12 @@ def main():
             anneal_strategy="linear",
         )
 
-    # Loss function
+    # LOSS function
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25
+    lambda_coord = 25*2
     criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_coord=lambda_coord)
 
     # Training and evaluation
@@ -624,15 +637,23 @@ def main():
                 print(f"Checkpoint salvato all'epoca {epoch} con validation loss {validation_loss:.4f}")
 
             # Plot the average training loss per epoch
+            # Plot the average training loss per epoch
             plt.figure(figsize=(10, 6))
-            plt.plot(losses, label="Training Loss")
+            if os.path.exists(plot_file):
+                # Se il file esiste, carica il grafico esistente
+                img = plt.imread(plot_file)
+                plt.imshow(img, extent=[0, len(losses), min(losses), max(losses)], aspect='auto', alpha=0.3)
+                print(f"Grafico esistente caricato da {plot_file}")
+            # Aggiungi i nuovi dati al grafico
+            plt.plot(range(start_epoch, start_epoch + len(losses)), losses, label="Training Loss", color="blue")
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
             plt.title("Training Loss Over Epochs")
             plt.legend()
             plt.grid(True)
-            #plt.show(block=False)
-            plt.savefig("training_loss.png")
+            # Salva il grafico aggiornato
+            plt.savefig(plot_file)
+            print(f"Grafico aggiornato salvato in {plot_file}")
     
     
         pbar.update(1)

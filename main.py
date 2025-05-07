@@ -64,8 +64,8 @@ class myDataset(Dataset):
         # convert label using one-hot encoding
         label_one_hot = torch.zeros(len(self.classes_list))
         label_one_hot[label_nr] = 1
-        # create torch tensor: [...one_hot_label..., center_t, delta_t]
-        full_label = torch.cat((label_one_hot, torch.tensor([center_t, delta_t])))
+        # create torch tensor: [...one_hot_label..., delta_t, center_t]
+        full_label = torch.cat((label_one_hot, torch.tensor([delta_t, center_t])))
 
         # now reading actual data from file
         clip_name = self.labels_df["clip_name"].iloc[index]
@@ -78,11 +78,11 @@ class myDataset(Dataset):
                 audio = audio * gain
                 
             if np.random.rand() > 0.5:  # Randomly apply pitch shifting
-                n_steps = np.random.uniform(-1, 1)  # Shift pitch by -2 to +2 semitones
+                n_steps = np.random.uniform(-1, 1)  # Shift pitch by -1 to +1 semitones
                 audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
 
             if np.random.rand() > 0.5:  # Randomly apply time stretching
-                rate = np.random.uniform(0.9, 1.1)  # Stretch by 0.8x to 1.2x
+                rate = np.random.uniform(0.9, 1.1)  # Stretch by 0.9x to 1.1x
                 audio = librosa.effects.time_stretch(audio, rate=rate)
                 full_label[-2] = full_label[-2] * rate
                 full_label[-1] = full_label[-1] * rate
@@ -123,7 +123,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         data, target = data.to(device), target.to(device)
 
         output = model(data)
-        loss,class_loss,delta_loss, center_loss = criterion(output, target)
+        loss,class_loss,delta_loss, center_loss, coherence_loss = criterion(output, target)
 
         # Backward pass and optimization
         optimizer.zero_grad()
@@ -137,7 +137,7 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         if batch_idx % log_interval == 0:
             tqdm.write(
                 f"[Epoch {epoch}] Batch {batch_idx}/{len(train_loader)} "
-                f"- Total Loss: {loss.item():.4f} | Class Loss: {class_loss.item():.4f} | Delta Loss: {delta_loss.item():.4f} | Center Loss: {center_loss.item():.4f}"
+                f"- Total Loss: {loss.item():.4f} | Class Loss: {class_loss.item():.4f} | Delta Loss: {delta_loss.item():.4f} | Center Loss: {center_loss.item():.4f} | Coherence Loss: {coherence_loss.item():.4f}"
             )
 
         # Update progress bar and record loss
@@ -172,7 +172,7 @@ def number_of_correct(output, target, iou_threshold,negative_class_index):
 
     iou = intersection_over_union(output_bounding_box, target_bounding_box)
 
-    return (iou >= iou_threshold).int().sum().item() #+ negative_correct
+    return (iou >= iou_threshold).int().sum().item() + negative_correct
 
 
 def intersection_over_union(output_bb, target_bb):
@@ -213,12 +213,12 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     model.eval()
     total_loss = 0
     correct = 0
-    positive_total = 0
     all_targets = []
     all_predictions = []
     all_durations = []
     pred_durations = []
-    offset_errors = []
+    center_errors = []
+    delta_errors = []
     relative_errors = []
     # Per MAE e MSE
     all_output_bb = []
@@ -233,7 +233,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
 
             # Forward pass
             output = model(data)
-            loss,class_loss,delta_loss, center_loss = criterion(output, target)
+            loss,_,_,_,_ = criterion(output, target)
             total_loss += loss.item()
 
             # Use number_of_correct to calculate correct predictions
@@ -243,7 +243,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
             predicted_class = get_likely_index(output[:, :-2])
             true_class = get_likely_index(target[:, :-2])
             positive_mask = (true_class != negative_class_index)
-
+            # Only for positive classes calculate regression metrics
             if positive_mask.any():
                 output_bb = output[positive_mask, -2:]
                 target_bb = target[positive_mask, -2:]
@@ -268,19 +268,19 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
                 relative_error = torch.abs(pred_duration - true_duration) / true_duration
                 relative_errors.extend(relative_error.cpu().numpy())
 
-                # Calculate offset error
-                offset_error = torch.abs(output_bb[:, 1] - target_bb[:, 1])
-                offset_errors.extend(offset_error.cpu().numpy())
+                # Calculate delta error
+                delta_error = torch.abs(output_bb[:, 0] - target_bb[:, 0])
+                delta_errors.extend(delta_error.cpu().numpy())
+                # Calculate center error
+                center_error = torch.abs(output_bb[:, 1] - target_bb[:, 1])
+                center_errors.extend(center_error.cpu().numpy())
 
-                # Calculate IoU for positive samples
+                # Calculate IoU for positives
                 iou_values = intersection_over_union(output_bb, target_bb)
                 iou_list.extend(iou_values.cpu().numpy().tolist())
 
             all_predictions.extend(predicted_class.cpu().numpy())
             all_targets.extend(true_class.cpu().numpy())
-
-            all_positive_mask = (true_class != negative_class_index)
-            positive_total += all_positive_mask.sum().item()
 
             pbar.update(1)
 
@@ -300,6 +300,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     conf_matrix = confusion_matrix(all_targets, all_predictions)
     print("\nConfusion Matrix:\n", conf_matrix)
 
+
     # MAE and MSE for center and delta
     all_output_bb = torch.cat(all_output_bb, dim=0)
     all_target_bb = torch.cat(all_target_bb, dim=0)
@@ -307,12 +308,16 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     mse_center = mean_squared_error(all_target_bb[:, 1].numpy(), all_output_bb[:, 1].numpy())
     mae_delta = mean_absolute_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
     mse_delta = mean_squared_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
-
     print(f"\nMAE Center: {mae_center:.4f}, MSE Center: {mse_center:.4f}")
     print(f"MAE Delta: {mae_delta:.4f}, MSE Delta: {mse_delta:.4f}")
-    # Calculate IoU accuracy
-    accuracy = 100.0 * correct / positive_total
-    print(f"IoU Accuracy (positive classes): {accuracy:.2f}%")
+    normalized_mae_center = mae_center / np.mean(all_target_bb[:, 1].numpy())
+    normalized_mae_delta = mae_delta / np.mean(all_target_bb[:, 0].numpy())
+    print(f"Normalized MAE Center: {normalized_mae_center:.4f}")
+    print(f"Normalized MAE Delta: {normalized_mae_delta:.4f}")
+
+    # Calculate overall Accuracy
+    accuracy = 100.0 * correct / len(loader.dataset)
+    print(f"Accuracy (Classification+IoU>0.5): {accuracy:.2f}%")
 
     # Calculate mean IoU
     mean_iou = np.mean(iou_list) if iou_list else 0.0
@@ -322,11 +327,9 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     if relative_errors:
         mean_relative_error = np.mean(relative_errors)
         print(f"Mean Relative Error (Duration): {mean_relative_error:.4f}")
-
-    # Calculate offset error metrics
-    if offset_errors:
-        mean_offset_error = np.mean(offset_errors)
-        print(f"Mean Offset Error (Center): {mean_offset_error:.4f}")
+        mean_target_duration = np.mean(all_durations) # mean of real target durations
+        error_in_seconds = mean_relative_error * mean_target_duration
+        print(f"Errore medio sulla durata: {error_in_seconds:.4f} secondi")
 
     # Calculate duration accuracy
     if all_durations and pred_durations:
@@ -334,6 +337,30 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
             np.abs(np.array(pred_durations) - np.array(all_durations)) / np.array(all_durations) < 0.1
         )
         print(f"Duration Accuracy (within 10%): {duration_accuracy:.2f}")
+    
+    # Analyze error distributions for center
+    print("\nError Analysis (Center):")
+    print(f"Mean Offset Error (Center): {np.mean(center_errors):.4f}")
+    print(f"Max Offset Error (Center): {np.max(center_errors):.4f}")
+    print(f"Min Offset Error (Center): {np.min(center_errors):.4f}")
+
+    # Analyze error distributions for delta
+    print("\nError Analysis (Delta):")
+    print(f"Mean Error (Delta): {np.mean(delta_errors):.4f}")
+    print(f"Max Error (Delta): {np.max(delta_errors):.4f}")
+    print(f"Min Error (Delta): {np.min(delta_errors):.4f}")
+
+    # Plot error distributions
+    plt.figure(figsize=(10, 6))
+    plt.hist(center_errors, bins=50, alpha=0.7, label="Center Offset Errors")
+    plt.hist(delta_errors, bins=50, alpha=0.7, label="Delta Errors")
+    plt.xlabel("Error")
+    plt.ylabel("Frequency")
+    plt.title("Distribution of Center and Delta Errors")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("center_delta_error_distribution.png")
+    print("Saved center and delta error distribution to 'center_delta_error_distribution.png'")
 
     return total_loss
 
@@ -353,7 +380,7 @@ def initialize_model(architecture, num_classes, device):
         num_features = model.fc.in_features
         model.fc = nn.Identity()  # Replace with identity to extract features
 
-        # Add two separate heads
+        # Add two separate heads for classification and regression
         class_head = nn.Sequential(
             nn.Linear(num_features, 256),
             nn.ReLU(),
@@ -361,10 +388,13 @@ def initialize_model(architecture, num_classes, device):
             nn.Linear(256, num_classes)  # Output: num_classes for classification
         )
         bb_head = nn.Sequential(
-            nn.Linear(num_features, 256),
+            nn.Linear(num_features, 512),
             nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 2)  # Output: 2 for bounding box regression
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 2)  # Output: 2 (delta, center)
         )
 
         print("Using ResNet18 with two heads...\n")
@@ -384,7 +414,7 @@ def initialize_model(architecture, num_classes, device):
         num_features = model.last_channel
         model.classifier = nn.Identity()  # Replace with identity to extract features
 
-        # Add two separate heads
+        # Add two separate heads for classification and regression
         class_head = nn.Sequential(
             nn.Linear(num_features, 256),
             nn.ReLU(),
@@ -422,11 +452,12 @@ def initialize_model(architecture, num_classes, device):
     return combined_model
 
 class CombinedLoss(nn.Module):
-    def __init__(self, classes_list, lambda_center, lambda_delta, class_weights=None):
+    def __init__(self, classes_list, lambda_center, lambda_delta, lambda_coherence, class_weights=None):
         super(CombinedLoss, self).__init__()
         self.num_classes = len(classes_list)
         self.lambda_center = lambda_center
         self.lambda_delta = lambda_delta
+        self.lambda_coherence = lambda_coherence
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         self.delta_loss_fn = nn.SmoothL1Loss()  # Loss for delta
         self.center_loss_fn = nn.SmoothL1Loss()  # Loss for center
@@ -454,46 +485,102 @@ class CombinedLoss(nn.Module):
             delta_loss = self.delta_loss_fn(output_delta, target_delta)
             center_loss = self.center_loss_fn(output_center, target_center)
 
+            # Coherence loss
+            output_xmin = output_center - (output_delta / 2)
+            output_xmax = output_center + (output_delta / 2)
+            target_xmin = target_center - (target_delta / 2)
+            target_xmax = target_center + (target_delta / 2)
+            coherence_loss = nn.SmoothL1Loss()(output_xmin, target_xmin) + nn.SmoothL1Loss()(output_xmax, target_xmax)
+
         else:
             delta_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
             center_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
+            coherence_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
+
 
         # Compute the total loss
-        total_loss= class_loss + self.lambda_center *center_loss + self.lambda_delta * delta_loss
-        return total_loss, class_loss, self.lambda_delta * delta_loss, self.lambda_center *center_loss
+        total_loss= class_loss + self.lambda_center * center_loss + self.lambda_delta * delta_loss + self.lambda_coherence * coherence_loss
+        return total_loss, class_loss, self.lambda_delta * delta_loss, self.lambda_center *center_loss, self.lambda_coherence * coherence_loss
     
-class GlobalMSELoss(nn.Module):
-    def __init__(self, classes_list, lambda_coord=0.5):
-        super(GlobalMSELoss, self).__init__()
+
+class DynamicCombinedLoss(nn.Module):
+    def __init__(self, classes_list, init_lambda_center, init_lambda_delta, init_lambda_coherence, class_weights=None):
+        """
+        init_lambda_* sono i valori iniziali che si utilizzeranno per inizializzare i parametri dinamici.
+        Questi verranno trasformati in log sigma per stabilità numerica e per permettere la loro ottimizzazione.
+        """
+        super(DynamicCombinedLoss, self).__init__()
         self.num_classes = len(classes_list)
-        self.lambda_coord = lambda_coord
-        self.class_loss_fn = nn.MSELoss()
-        self.bb_loss_fn = nn.MSELoss()
         self.classes_list = classes_list
 
+        # Loss per la classificazione (si mantiene invariata)
+        self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
+        
+        # Loss per le regressioni (delta e center)
+        self.delta_loss_fn = nn.SmoothL1Loss()
+        self.center_loss_fn = nn.SmoothL1Loss()
+        
+        # Parametri dinamici per pesare le componenti di regressione:
+        # Inizializziamo i parametri come log(sigma), in modo da garantire sigma > 0
+        self.log_sigma_center = nn.Parameter(torch.log(torch.tensor(init_lambda_center, dtype=torch.float)))
+        self.log_sigma_delta = nn.Parameter(torch.log(torch.tensor(init_lambda_delta, dtype=torch.float)))
+        self.log_sigma_coherence = nn.Parameter(torch.log(torch.tensor(init_lambda_coherence, dtype=torch.float)))
+
     def forward(self, output, target):
-
-        output_class = torch.softmax(output[:, :self.num_classes], dim=1)
-        #output_class = output[:, :self.num_classes]
-        output_bb = output[:, self.num_classes:]
+        # Estrazione delle componenti: la prima parte per la classificazione,
+        # le successive per le componenti di regressione
+        output_class = output[:, :self.num_classes]
+        output_delta = output[:, self.num_classes]       # Larghezza (delta)
+        output_center = output[:, self.num_classes + 1]    # Centro
+        
         target_class = target[:, :self.num_classes]
-        target_bb = target[:, self.num_classes:]
+        target_delta = target[:, self.num_classes]         # Larghezza (delta)
+        target_center = target[:, self.num_classes + 1]      # Centro
 
-        #class_loss = self.class_loss_fn(output_class.argmax(dim=1).float(), target_class.argmax(dim=1).float())
-        class_loss = self.class_loss_fn(output_class, target_class)
+        # Loss per la classificazione
+        class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
 
-
-        # We want to ingnore negative class BB
-        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller') 
+        # Creiamo una maschera per escludere i bounding box non positivi sulla base della classe 'Nonfiller'
+        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller')
+        
         if positive_mask.any():
-            output_bb = output_bb[positive_mask]
-            target_bb = target_bb[positive_mask]
-            bb_loss = self.bb_loss_fn(output_bb, target_bb)
+            output_delta_pos = output_delta[positive_mask]
+            output_center_pos = output_center[positive_mask]
+            target_delta_pos = target_delta[positive_mask]
+            target_center_pos = target_center[positive_mask]
+
+            # Calcolo delle loss per delta e center
+            delta_loss = self.delta_loss_fn(output_delta_pos, target_delta_pos)
+            center_loss = self.center_loss_fn(output_center_pos, target_center_pos)
+
+            # Coherence loss: calcoliamo xmin e xmax dai centri e dagli delta
+            output_xmin = output_center_pos - (output_delta_pos / 2)
+            output_xmax = output_center_pos + (output_delta_pos / 2)
+            target_xmin = target_center_pos - (target_delta_pos / 2)
+            target_xmax = target_center_pos + (target_delta_pos / 2)
+            
+            # Usiamo lo stesso tipo di loss (SmoothL1) per la componente di coerenza
+            coherence_loss = self.delta_loss_fn(output_xmin, target_xmin) + self.delta_loss_fn(output_xmax, target_xmax)
         else:
-            bb_loss = 0.0  # No one positive
+            delta_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
+            center_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
+            coherence_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
 
+        # Calcoliamo sigma da log_sigma (per garantire positività)
+        sigma_center = torch.exp(self.log_sigma_center)
+        sigma_delta = torch.exp(self.log_sigma_delta)
+        sigma_coherence = torch.exp(self.log_sigma_coherence)
 
-        return class_loss + self.lambda_coord * bb_loss
+        # Pesi dinamici per ogni loss: formulazione uncertainty weighting
+        weighted_center_loss = center_loss / (2 * sigma_center ** 2) + self.log_sigma_center
+        weighted_delta_loss = delta_loss / (2 * sigma_delta ** 2) + self.log_sigma_delta
+        weighted_coherence_loss = coherence_loss / (2 * sigma_coherence ** 2) + self.log_sigma_coherence
+
+        # La loss totale è la somma della loss per la classificazione e quelle pesate per le regressioni
+        total_loss = class_loss + weighted_center_loss + weighted_delta_loss + weighted_coherence_loss
+
+        return total_loss, class_loss, weighted_delta_loss, weighted_center_loss, weighted_coherence_loss
+
 
 
 def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device, num_workers=8):
@@ -556,69 +643,63 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    architecture = "MobileNet"  # Choose between "ResNet" and "MobileNet"
+    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
     model = initialize_model(architecture, num_classes, device)
     print(model)
     summary(model, (1, 224, 224))
-
-    lr = 0.001
-    # Nr.epochs to do
-    n_epochs = 10
-
-    optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
-
-    start_epoch = 1
-    plot_file = "training_loss.png"
-    checkpoint_path = os.path.join("..","checkpoint.pth")
-    if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        start_epoch = checkpoint["epoch"] + 1  # Riprendi dalla prossima epoca
-        print(f"Loaded checkpoint from {checkpoint_path}\n")
-        # Calcola il totale delle epoche: epoche già fatte + epoche aggiuntive
-        total_epochs = (start_epoch - 1) + n_epochs
-        # Imposta last_epoch sottraendo 1 per compensare il passo iniziale automatico
-        scheduler = OneCycleLR(
-            optimizer,
-            max_lr=lr * 10,
-            steps_per_epoch=len(train_loader),
-            epochs=total_epochs,
-            anneal_strategy="linear",
-            last_epoch=(start_epoch - 1) * len(train_loader) - 1,
-            pct_start=0.1,  # Riduce la fase di warm-up per non "sprecare" le prime epoche
-        )
-        # Se vuoi, non caricare lo state_dict dello scheduler (dato che i parametri totali sono cambiati)
-    else:
-        print("No checkpoint found. Starting training from scratch.\n")
-        total_epochs = n_epochs
-        scheduler = OneCycleLR(
-            optimizer,
-            max_lr=lr * 10,
-            steps_per_epoch=len(train_loader),
-            epochs=total_epochs,
-            anneal_strategy="linear",
-        )
 
     # LOSS function
     # Calcola i pesi inversamente proporzionali alla frequenza delle classi
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25
-    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=1.5*lambda_coord, lambda_delta=15*lambda_coord)
+    lambda_coord = 25*2
+    #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=lambda_coord)
+    criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=lambda_coord, init_lambda_delta=2*lambda_coord, init_lambda_coherence=lambda_coord, class_weights=class_weights).to(device)
 
+    # Training parameters
+    #lr = 0.00001 #low
+    lr= 0.0001 #optimal
+    total_epochs = 50
+    # Scheduler and Optimizer
+    #optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(list(model.parameters()) + list(criterion.parameters()), lr=lr, weight_decay=0.0001)
+    scheduler = OneCycleLR(
+        optimizer,
+        max_lr=lr * 10,
+        steps_per_epoch=len(train_loader),
+        epochs=total_epochs,
+        anneal_strategy="linear",
+    )
+    # Checkpoint 
+    checkpoint_path = os.path.join("..", "checkpoint.pth")
+    start_epoch = 1
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1
+        print(f"Checkpoint caricato: epoca {checkpoint['epoch']}\n")
+    else:
+        print("Nessun checkpoint trovato. Inizio del training da zero.\n")
+        
+
+
+    
     # Training and evaluation
     log_interval = len(train_loader)//100 #stamp every 1%
     losses = []
+    validation_losses = []
 
     print(
         f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}"
     )
 
     best_validation_loss = float("inf")
-    with tqdm(total=n_epochs) as pbar:
-        for epoch in range(start_epoch, start_epoch+n_epochs):
+    plot_file = "training_loss.png"
+    with tqdm(total=total_epochs, initial=start_epoch-1) as pbar:
+        for epoch in range(start_epoch, total_epochs + 1):
 
             # training on that epoch
             train_losses = train(
@@ -639,6 +720,7 @@ def main():
                 model, criterion, validation_loader, device, iou_threshold=0.5,
                 negative_class_index=train_set.classes_dict["Nonfiller"]
             )
+            validation_losses.append(validation_loss)
             print(f"Validation set: Loss: {validation_loss:.4f}")
             # Saving the best model
             if validation_loss < best_validation_loss:
@@ -657,6 +739,7 @@ def main():
             # Plot the average training loss per epoch
             plt.figure(figsize=(10, 6))
             plt.plot(range(start_epoch, start_epoch + len(losses)), losses, label="Training Loss", color="blue")
+            plt.plot(range(start_epoch, start_epoch + len(losses)), validation_losses, label="Validation Loss", color="green")
             plt.xlabel("Epoch")
             plt.ylabel("Loss")
             plt.title("Training Loss Over Epochs")
@@ -670,8 +753,8 @@ def main():
             current_lr = scheduler.get_last_lr()[0]
             print(f"Current Learning Rate: {current_lr:.6f}")
     
-    
-        pbar.update(1)
+            pbar.update(1)
+
     # Final evaluation on the test set
     test_loss = evaluate(
         model, criterion, test_loader, device, iou_threshold=0.5,

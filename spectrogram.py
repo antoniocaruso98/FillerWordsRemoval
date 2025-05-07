@@ -47,8 +47,8 @@ def get_db_mel_spectrogram(audio, n_fft, n_mels, sr):
         hop_length=hop_length,
     )
 
-    # convert to Power Spectrogram by taking modulus and squaring
-    mel_spec = np.abs(mel_spec) ** 2
+    # convert to Power Spectrogram by taking modulus and squaring (already applied in melspectrogram)
+    #mel_spec = np.abs(mel_spec) ** 2
 
     # convert power to dB
     db_mel_spec = power_to_db(mel_spec)

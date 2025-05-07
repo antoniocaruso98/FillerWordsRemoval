@@ -25,6 +25,13 @@ CombinedLoss (problemi con regressione BB)
 **ResNet6v2+6
 quello di prima allenato per 6 epoche ulteriori
 (miglioriamo di poco -> bisogna salvare lo stato dello scheduler e ripartire da quello per le nuove epoche)
+
+**due_teste5
+due teste per classificazione e regressione
+lambda_coord=50
+lr=0.001
+
+
 **ResNet6v2GLobalMSE_Balanced
 lr = 0.001/0.01
 lambda_coord= 1

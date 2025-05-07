@@ -44,16 +44,20 @@ def main():
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
 
+
+
     batch_size = 64
     _, test_loader, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
+ 
    
     # Loss function
     class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25
-    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=1.5*lambda_coord, lambda_delta=15*lambda_coord)
+    lambda_coord = 25*2
+    criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=0.5*lambda_coord)
+    
 
     # Indice della classe "Nonfiller"
     negative_class_index = validation_set.classes_dict["Nonfiller"]

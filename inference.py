@@ -3,6 +3,50 @@ import sys
 import os
 
 
+
+
+def intersect_intervals(intervals):
+    n = len(intervals)
+
+    # Ordina gli intervalli per inizio
+    intervals.sort()
+    
+
+    input_list= []
+    output_list= intervals
+    current_lenght= n
+    prev_lenght= 0
+    while current_lenght!= prev_lenght:
+        prev_lenght= current_lenght
+        input_list= output_list
+        output_list= []
+        print("ho fatto un giro")
+        i = 0
+        while i < len(input_list):
+            a1, b1 = input_list[i]
+            if i!=len(input_list)-1:
+                a2, b2 = input_list[i+1]
+                # Verifica sovrapposizione
+                if a2 <= b1 and b2 >= a1:
+                    # Calcola l'intersezione
+                    start = max(a1, a2)
+                    end = min(b1, b2)
+                    output_list.append((start, end))
+                    i+= 1
+                else:
+                    output_list.append((a1, b1))
+            else:
+                output_list.append((a1, b1))
+            i += 1
+        output_list.sort()
+        current_lenght= len(output_list)
+
+
+    return output_list
+
+
+
+
 # Raggruppa gli indici continui di silenzio in intervalli
 def find_silent_intervals(power, sr, threshold, min_duration_s):
     """
@@ -102,7 +146,7 @@ def remove_silence(audio_path):
     for start, end in silent_intervals:
         output_audio.append(audio[int(last_end_sample * sr) : int(start * sr)])
         # Add small silent interval
-        output_audio.append(np.zeros(int(min_duration_s * sr)))
+        output_audio.append(audio[int(start * sr): int(start * sr)+int(min_duration_s * sr)])
         last_end_sample = end
 
     # Add the remaining part of the audio. No silent interval can be found
@@ -120,7 +164,7 @@ def remove_silence(audio_path):
     return output_audio, sr
 
 
-def load_batch(audio, sr, batch_size, batch_nr):
+def load_batch(audio, sr, batch_size, batch_nr, stride):
     """
     Try to build a batch containing **batch_size** dB MEL-spectrograms from audio,
     starting from the offset corresponding to **batch_nr**. If the **audio** signal
@@ -131,7 +175,7 @@ def load_batch(audio, sr, batch_size, batch_nr):
     clip_length = sr
 
     # Offset (expressed in nr. of samples) of the batch start in the audio array
-    batch_offset = batch_nr * batch_size * clip_length
+    batch_offset = int( batch_nr * (clip_length + (batch_size-1)*stride*clip_length) )
 
     # Build the batch, starting from batch offset. The loop tries
     # to extract 'batch_size' clips and, if this is not possibile due to the
@@ -139,7 +183,7 @@ def load_batch(audio, sr, batch_size, batch_nr):
     # only the full extracted clips -> The last, incomplete clip is discarded.
     clips = []
     for clip_nr in range(batch_size):
-        start_sample = batch_offset + clip_nr * clip_length
+        start_sample = batch_offset + int(clip_nr * clip_length * stride)
         end_sample = start_sample + clip_length
         if end_sample <= len(audio):
             clips.append(audio[start_sample:end_sample])
@@ -229,6 +273,11 @@ def parse_args():
 
 def main():
 
+    #stride
+    #stride= 0.25
+    #stride=1
+    #stride= 0.5
+    stride= 0.2
     # Set maximum size of batches to be processed by the model
     batch_size = 64
     # List of all recognizable classes
@@ -254,12 +303,12 @@ def main():
     end = False
     while not end:
         # Load a batch
-        batch = load_batch(clean_audio, sr, batch_size, batch_nr)
+        batch = load_batch(clean_audio, sr, batch_size, batch_nr, stride)
         # Check if it is the last one
         if len(batch) < batch_size:
             end = True
         # Compute offset of the batch in the audio array (in samples)
-        batch_offset = batch_nr * batch_size * clip_length
+        batch_offset = int( batch_nr * (clip_length + (batch_size-1)*stride*clip_length) )
         # Get prediction
         output = model(batch)
 
@@ -284,7 +333,7 @@ def main():
             # If the class is not negative, then we need to remove the corresponding
 
             # Compute clip offset in batch (in samples)
-            clip_offset_in_batch = i * clip_length
+            clip_offset_in_batch = i * clip_length * stride
             # Compute event inclip start offset (in samples)
             event_offset_inclip = output_xmin[i]
             # Compute offset (samples) in the audio array corresponding to event start
@@ -294,9 +343,13 @@ def main():
             # Compute start and end of event (in samples)
             event_start_in_audio = event_offset_in_audio
             event_end_in_audio = event_start_in_audio + event_len[i]
-            # Append this interval to the list containing the fragments to be removed
+
+           # Neglecting words
+            if output_class_index == classes_list.index("Words"): 
+                continue
+             # Append this interval to the list containing the fragments to be removed
             audio_fragments_to_be_removed.append(
-                (event_start_in_audio, event_end_in_audio)
+                (event_start_in_audio.int().item(), event_end_in_audio.int().item())
             )
             events_log.append(
                 (
@@ -311,24 +364,67 @@ def main():
 
     # Now remove fragments containing fillers
     final_audio_list = []
-    filler_silence_s = 0.75
+    filler_silence_s = 0.150/2
     last_end_sample = 0
+    print(f"Nr. of fragments to be removed: {len(audio_fragments_to_be_removed)}")
+    audio_fragments_to_be_removed = intersect_intervals(audio_fragments_to_be_removed)
+    print(f"Nr. of fragments to be removed after intersection: {len(audio_fragments_to_be_removed)}")
+
+    [print(s/sr,e/sr) for s,e in audio_fragments_to_be_removed]
+
+    # fade in/out
+    fade_duration = 0.08 #s 
+
     for start, end in audio_fragments_to_be_removed:
         # print(f"start = {start}, end = {end}")
-        if start.int().item() < 0:
-            start = torch.tensor(0)
-        if end.int().item() > len(clean_audio):
-            end = torch.tensor(len(clean_audio))
-        final_audio_list.append(clean_audio[last_end_sample : start.int().item()])
+        if start < 0:
+            start = 0
+        if end > len(clean_audio):
+            end = len(clean_audio)
+        
+        # Do not consider filler too short
+        if (end-start)/sr < 0.150:
+            final_audio_list.append(clean_audio[start:end])
+            last_end_sample = end
+            continue
+        # Segmento precedente con fade-out
+        clean_audio[start-int(fade_duration*sr):start] = apply_fade(clean_audio[start-int(fade_duration*sr):start], fade_duration, sr, fade_type="out")
+        final_audio_list.append(clean_audio[last_end_sample : start])
+
+        # Silenzio
         final_audio_list.append(np.zeros(int(filler_silence_s * sr)))
-        last_end_sample = end.int().item()
+
+        # Segmento successivo con fade-in
+        next_segment = clean_audio[end:end+int(fade_duration*sr)]
+        next_segment = apply_fade(next_segment, fade_duration, sr, fade_type="in")
+        #final_audio_list.append(next_segment)
+    
+        last_end_sample = end
     final_audio_list.append(clean_audio[last_end_sample:])
 
     final_audio = np.concatenate(final_audio_list)
 
-    [print(l) for l in events_log]
-
     return final_audio
+
+
+def apply_fade(audio_segment, fade_duration, sr, fade_type="in"):
+    """Applica un fade-in o fade-out a un segmento audio."""
+    fade_samples = int(fade_duration * sr)
+    
+    # Se il segmento è più corto del fade, riduciamo la durata del fade
+    if len(audio_segment) < fade_samples:
+        fade_samples = len(audio_segment)
+
+    # non-linear fade curve (human perception)
+    fade_curve = np.sin(np.linspace(0, np.pi/2, fade_samples)) if fade_type == "in" else np.sin(np.linspace(np.pi/2, 0, fade_samples))
+    
+    if fade_type == "in":
+        audio_segment[:fade_samples] *= fade_curve
+    else:
+        audio_segment[-fade_samples:] *= fade_curve
+    
+    return audio_segment
+
 
 
 if __name__ == "__main__":

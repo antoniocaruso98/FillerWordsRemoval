@@ -1,5 +1,6 @@
 DATASET_COMPLETO: filler shift spectrogram + nonfiller tagliate ogni secondo su dataset diverso
 **prova1.pth
+MobileNetv2
 batch_size = 64 (migliore riscontrato)
 lr = 0.01
 n_epochs = 1
@@ -16,6 +17,7 @@ lambda_coord=0.5
 lr = 0.01
 lambda_coord=1
 Data augmentation applicata (risultati scadenti)
+
 DATASET_COMPLETO_V2: 
 **ResNet6v2
 lr = 0.001/0.01
@@ -30,6 +32,13 @@ quello di prima allenato per 6 epoche ulteriori
 due teste per classificazione e regressione
 lambda_coord=50
 lr=0.001
+
+
+**dynamic20
+loss dinamica con pesi iniziali lambda_coord=50, e tutti lambda_coord tranne il delta=2*lambda_coord
+**
+loss dinamica con pesi iniziali lambda_coord=25, e tutti lambda_coord tranne il centro=2*lambda_coord
+epoche ridotto a 20
 
 
 **ResNet6v2GLobalMSE_Balanced

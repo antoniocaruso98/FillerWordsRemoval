@@ -653,14 +653,14 @@ def main():
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25*2
+    lambda_coord = 25
     #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=lambda_coord)
-    criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=lambda_coord, init_lambda_delta=2*lambda_coord, init_lambda_coherence=lambda_coord, class_weights=class_weights).to(device)
+    criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=2*lambda_coord, init_lambda_delta=lambda_coord, init_lambda_coherence=lambda_coord, class_weights=class_weights).to(device)
 
     # Training parameters
     #lr = 0.00001 #low
     lr= 0.0001 #optimal
-    total_epochs = 50
+    total_epochs = 20
     # Scheduler and Optimizer
     #optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
     optimizer = torch.optim.Adam(list(model.parameters()) + list(criterion.parameters()), lr=lr, weight_decay=0.0001)

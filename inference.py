@@ -28,9 +28,9 @@ def intersect_intervals(intervals):
                 a2, b2 = input_list[i+1]
                 # Verifica sovrapposizione
                 if a2 <= b1 and b2 >= a1:
-                    # Calcola l'intersezione
-                    start = max(a1, a2)
-                    end = min(b1, b2)
+                    # Calcola l'unione
+                    start = min(a1, a2)
+                    end = max(b1, b2)
                     output_list.append((start, end))
                     i+= 1
                 else:
@@ -275,9 +275,9 @@ def main():
 
     #stride
     #stride= 0.25
-    #stride=1
+    stride=1
     #stride= 0.5
-    stride= 0.2
+    #stride= 0.2
     # Set maximum size of batches to be processed by the model
     batch_size = 64
     # List of all recognizable classes
@@ -364,7 +364,7 @@ def main():
 
     # Now remove fragments containing fillers
     final_audio_list = []
-    filler_silence_s = 0.150/2
+    filler_silence_s = 0.100
     last_end_sample = 0
     print(f"Nr. of fragments to be removed: {len(audio_fragments_to_be_removed)}")
     audio_fragments_to_be_removed = intersect_intervals(audio_fragments_to_be_removed)
@@ -373,7 +373,12 @@ def main():
     [print(s/sr,e/sr) for s,e in audio_fragments_to_be_removed]
 
     # fade in/out
-    fade_duration = 0.08 #s 
+    fade_duration = 0.150 #s 
+    # max/min dynamic duration
+    fade_min, fade_max = 0.08, 0.180 
+    silenzio_min, silenzio_max = 0.30, 1.00
+    min_filler = 0.150
+    max_filler = 0.600 *2
 
     for start, end in audio_fragments_to_be_removed:
         # print(f"start = {start}, end = {end}")
@@ -383,15 +388,25 @@ def main():
             end = len(clean_audio)
         
         # Do not consider filler too short
-        if (end-start)/sr < 0.150:
-            final_audio_list.append(clean_audio[start:end])
+        if (end-start)/sr < min_filler:
+            final_audio_list.append(clean_audio[last_end_sample:end])
             last_end_sample = end
             continue
+
+        # durata_filler in s
+        durata_filler = (end - start)/sr
+        # Scaling values
+        scaling = (durata_filler-min_filler)/(max_filler-min_filler)
+        scaling= min(max(scaling, 0), 1)
+        # durations
+        fade_duration = int(fade_min + (fade_max - fade_min) * (scaling))
+        filler_silence_s = int(silenzio_min + (silenzio_max - silenzio_min) * scaling)
+
         # Segmento precedente con fade-out
         clean_audio[start-int(fade_duration*sr):start] = apply_fade(clean_audio[start-int(fade_duration*sr):start], fade_duration, sr, fade_type="out")
         final_audio_list.append(clean_audio[last_end_sample : start])
 
-        # Silenzio
+        # Silence
         final_audio_list.append(np.zeros(int(filler_silence_s * sr)))
 
         # Segmento successivo con fade-in

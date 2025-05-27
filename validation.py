@@ -45,7 +45,6 @@ def main():
     validation_set = myDataset(root_folder, "validation")
 
 
-
     batch_size = 64
     _, test_loader, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
  

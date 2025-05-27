@@ -215,12 +215,9 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     correct = 0
     all_targets = []
     all_predictions = []
-    all_durations = []
-    pred_durations = []
     center_errors = []
     delta_errors = []
-    relative_errors = []
-    # Per MAE e MSE
+    # For MAE 
     all_output_bb = []
     all_target_bb = []
     pbar = tqdm(total=len(loader), desc="Evaluating", leave=False)
@@ -245,39 +242,23 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
             positive_mask = (true_class != negative_class_index)
             # Only for positive classes calculate regression metrics
             if positive_mask.any():
-                output_bb = output[positive_mask, -2:]
-                target_bb = target[positive_mask, -2:]
+                output_bb = output[positive_mask, -2:].cpu()
+                target_bb = target[positive_mask, -2:].cpu()
 
                 # Accumulate bounding box predictions and targets
-                all_output_bb.append(output_bb.cpu())
-                all_target_bb.append(target_bb.cpu())
-
-                # Transform center and width to xmin, xmax
-                output_xmin = output_bb[:, 1] - (output_bb[:, 0] / 2)
-                output_xmax = output_bb[:, 1] + (output_bb[:, 0] / 2)
-                target_xmin = target_bb[:, 1] - (target_bb[:, 0] / 2)
-                target_xmax = target_bb[:, 1] + (target_bb[:, 0] / 2)
-
-                # Calculate durations
-                pred_duration = output_xmax - output_xmin
-                true_duration = target_xmax - target_xmin
-                # Collect durations for metrics
-                pred_durations.extend(pred_duration.cpu().numpy())
-                all_durations.extend(true_duration.cpu().numpy())
-                # Calculate relative error
-                relative_error = torch.abs(pred_duration - true_duration) / true_duration
-                relative_errors.extend(relative_error.cpu().numpy())
+                all_output_bb.extend(output_bb.numpy())
+                all_target_bb.extend(target_bb.numpy())
 
                 # Calculate delta error
                 delta_error = torch.abs(output_bb[:, 0] - target_bb[:, 0])
-                delta_errors.extend(delta_error.cpu().numpy())
+                delta_errors.extend(delta_error.numpy())
                 # Calculate center error
                 center_error = torch.abs(output_bb[:, 1] - target_bb[:, 1])
-                center_errors.extend(center_error.cpu().numpy())
+                center_errors.extend(center_error.numpy())
 
                 # Calculate IoU for positives
                 iou_values = intersection_over_union(output_bb, target_bb)
-                iou_list.extend(iou_values.cpu().numpy().tolist())
+                iou_list.extend(iou_values.numpy())
 
             all_predictions.extend(predicted_class.cpu().numpy())
             all_targets.extend(true_class.cpu().numpy())
@@ -286,81 +267,82 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
 
     pbar.close()
     total_loss /= len(loader)
+    # convert lists to numpy arrays for easier handling
+    all_output_bb= np.array(all_output_bb)
+    all_target_bb= np.array(all_target_bb)
+    delta_errors= np.array(delta_errors)
+    center_errors= np.array(center_errors)
+    iou_list = np.array(iou_list)
+    all_targets = np.array(all_targets)
+    all_predictions = np.array(all_predictions)
+
+    # CLASSIFICATION
 
     # Generate classification report
     report = classification_report(
         all_targets,
         all_predictions,
-        target_names=[f"Class {i}" for i in range(len(set(all_targets)))],
+        target_names= loader.dataset.classes_list,
         zero_division=0
     )
     print("\nClassification Report:\n", report)
 
     # Generate classification confusion matrix
     conf_matrix = confusion_matrix(all_targets, all_predictions)
-    print("\nConfusion Matrix:\n", conf_matrix)
+    print("Confusion Matrix (row:actual, col:predicted):\n", conf_matrix)
 
 
-    # MAE and MSE for center and delta
-    all_output_bb = torch.cat(all_output_bb, dim=0)
-    all_target_bb = torch.cat(all_target_bb, dim=0)
-    mae_center = mean_absolute_error(all_target_bb[:, 1].numpy(), all_output_bb[:, 1].numpy())
-    mse_center = mean_squared_error(all_target_bb[:, 1].numpy(), all_output_bb[:, 1].numpy())
-    mae_delta = mean_absolute_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
-    mse_delta = mean_squared_error(all_target_bb[:, 0].numpy(), all_output_bb[:, 0].numpy())
-    print(f"\nMAE Center: {mae_center:.4f}, MSE Center: {mse_center:.4f}")
-    print(f"MAE Delta: {mae_delta:.4f}, MSE Delta: {mse_delta:.4f}")
-    normalized_mae_center = mae_center / np.mean(all_target_bb[:, 1].numpy())
-    normalized_mae_delta = mae_delta / np.mean(all_target_bb[:, 0].numpy())
-    print(f"Normalized MAE Center: {normalized_mae_center:.4f}")
-    print(f"Normalized MAE Delta: {normalized_mae_delta:.4f}")
-
-    # Calculate overall Accuracy
-    accuracy = 100.0 * correct / len(loader.dataset)
-    print(f"Accuracy (Classification+IoU>0.5): {accuracy:.2f}%")
+    # REGRESSION
+    print("\nRegression Metrics:")
 
     # Calculate mean IoU
-    mean_iou = np.mean(iou_list) if iou_list else 0.0
-    print(f"Mean IoU (positives): {mean_iou:.4f}")
+    mean_iou = np.mean(iou_list)
+    print(f"Mean IoU (positives): {mean_iou*100:.4f}%")
 
-    # Calculate relative error metrics
-    if relative_errors:
-        mean_relative_error = np.mean(relative_errors)
-        print(f"Mean Relative Error (Duration): {mean_relative_error:.4f}")
-        mean_target_duration = np.mean(all_durations) # mean of real target durations
-        error_in_seconds = mean_relative_error * mean_target_duration
-        print(f"Errore medio sulla durata: {error_in_seconds:.4f} secondi")
+    # Calculate low relative error on delta
+    n_pred_low_rel_err = np.sum(
+        ( delta_errors / all_target_bb[:,0] ) < 0.1
+    )
+    print(f"Percentage of predictions with relative error on delta within 10%: {n_pred_low_rel_err/len(all_target_bb[:,0])*100:.2f}%")
 
-    # Calculate duration accuracy
-    if all_durations and pred_durations:
-        duration_accuracy = np.mean(
-            np.abs(np.array(pred_durations) - np.array(all_durations)) / np.array(all_durations) < 0.1
-        )
-        print(f"Duration Accuracy (within 10%): {duration_accuracy:.2f}")
+
+    # MAE for center and delta
+    mae_center = mean_absolute_error(all_target_bb[:, 1], all_output_bb[:, 1])
+    mae_delta = mean_absolute_error(all_target_bb[:, 0], all_output_bb[:, 0])
+    # Percentage of MAE Delta compared to mean of target bounding box widths
+    normalized_mae_delta = mae_delta / np.mean(all_target_bb[:,0])
     
     # Analyze error distributions for center
     print("\nError Analysis (Center):")
-    print(f"Mean Offset Error (Center): {np.mean(center_errors):.4f}")
-    print(f"Max Offset Error (Center): {np.max(center_errors):.4f}")
-    print(f"Min Offset Error (Center): {np.min(center_errors):.4f}")
+    print(f"Mean Error - MAE: {mae_center:.4f}s")
+    print(f"Max Error: {np.max(center_errors):.4f}s")
+    print(f"Min Error: {np.min(center_errors):.4f}s")
 
     # Analyze error distributions for delta
     print("\nError Analysis (Delta):")
-    print(f"Mean Error (Delta): {np.mean(delta_errors):.4f}")
-    print(f"Max Error (Delta): {np.max(delta_errors):.4f}")
-    print(f"Min Error (Delta): {np.min(delta_errors):.4f}")
+    print(f"Mean Error - MAE: {mae_delta:.4f}s")
+    print(f"Normalized MAE Delta: {normalized_mae_delta*100:.4f}%")
+    print(f"Max Error : {np.max(delta_errors):.4f}s")
+    print(f"Min Error : {np.min(delta_errors):.4f}s")
 
     # Plot error distributions
     plt.figure(figsize=(10, 6))
-    plt.hist(center_errors, bins=50, alpha=0.7, label="Center Offset Errors")
+    plt.hist(center_errors, bins=50, alpha=0.7, label="Center Errors")
     plt.hist(delta_errors, bins=50, alpha=0.7, label="Delta Errors")
-    plt.xlabel("Error")
+    plt.xlabel("Error[s]")
     plt.ylabel("Frequency")
-    plt.title("Distribution of Center and Delta Errors")
+    plt.title("Distribution of Center and Delta Absolute Errors")
     plt.legend()
     plt.grid(True)
     plt.savefig("center_delta_error_distribution.png")
     print("Saved center and delta error distribution to 'center_delta_error_distribution.png'")
+
+    # CLASSIFICATION + REGRESSION
+    print("\nOverall Metrics:")
+
+    # Calculate overall Accuracy
+    accuracy = 100.0 * correct / len(loader.dataset)
+    print(f"Accuracy (Classification+IoU>0.5): {accuracy:.2f}%")
 
     return total_loss
 
@@ -663,7 +645,7 @@ def main():
     total_epochs = 20
     # Scheduler and Optimizer
     #optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
-    optimizer = torch.optim.Adam(list(model.parameters()) + list(criterion.parameters()), lr=lr, weight_decay=0.0001)
+    optimizer = Adam(list(model.parameters()) + list(criterion.parameters()), lr=lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
         max_lr=lr * 10,

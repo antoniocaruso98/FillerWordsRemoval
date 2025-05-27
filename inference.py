@@ -256,17 +256,20 @@ def parse_args():
         default="ResNet",
     )
     parser.add_argument(
-        "-o", "--output", type=str, help="Output audio file path", default="output.wav"
+        "-o", "--output", type=str, help="Output audio file path, if not specified -> <input>_clean.<input_ext>", default=""
     )
 
     # Parsing degli argomenti
     args = parser.parse_args()
 
     # check arguments
-
     if args.file is None or args.weights is None:
         print("Invalid arguments")
         sys.exit(1)
+    
+    if args.output == "":
+        args.output = os.path.splitext(args.file)[0] + "_clean"+ os.path.splitext(args.file)[1]
+
 
     return args.file, args.debug, args.weights, args.output
 
@@ -295,6 +298,11 @@ def main():
 
     # List containing log of events in the format (start_s, end_s, filler_class)
     events_log = []
+
+    # Creating a container folder to save each occurence
+    container_folder = os.path.splitext(output_path)[0]
+    if not os.path.exists(container_folder):
+        os.makedirs(container_folder)
 
     # Iterate on all batches in the 'clean_audio' signal and send them as input
     # to the model to get predictions. End when the batch has a length which is
@@ -344,10 +352,10 @@ def main():
             event_start_in_audio = event_offset_in_audio
             event_end_in_audio = event_start_in_audio + event_len[i]
 
-           # Neglecting words
+            # Neglecting words
             if output_class_index == classes_list.index("Words"): 
                 continue
-             # Append this interval to the list containing the fragments to be removed
+            # Append this interval to the list containing the fragments to be removed
             audio_fragments_to_be_removed.append(
                 (event_start_in_audio.int().item(), event_end_in_audio.int().item())
             )
@@ -357,6 +365,17 @@ def main():
                     (event_end_in_audio / sr).item(),
                     classes_list[output_class_index],
                 )
+            )
+            # create a subdirectory if it is the first time that this class is encountered
+            if not os.path.exists(os.path.join(container_folder,classes_list[output_class_index])):
+                os.makedirs(os.path.join(container_folder,classes_list[output_class_index]))
+            # Save the clip as a separate file
+            sf.write(
+                os.path.join(
+                    container_folder, classes_list[output_class_index], f"clip_{batch_nr}_{i}.wav"
+                ),
+                clean_audio[event_start_in_audio:event_end_in_audio],
+                sr,
             )
 
         # Continue with next batch
@@ -461,7 +480,7 @@ if __name__ == "__main__":
     clean_audio, sr = remove_silence(audio_path)
 
     # Load model
-    model = load_model("ResNet", os.path.join("..","checkpoint.pth"))
+    model = load_model("ResNet", os.path.join("..",weights_path))
 
 
     final_audio = main()
@@ -470,4 +489,5 @@ if __name__ == "__main__":
     print("AUDIO SALVATO!")
 
 
-#python .\inference.py -f .\ytmp3free.cc_zia-tina-compilation-bella-cadduosa-e-speciali-e-youtubemp3free.org.mp3 -w funci -m ResNet -o output_prova_zia_tina.wav
+#python .\inference.py -f ..\audio_tests\eta_beta_test.mp3 -w checkpoint.pth -m ResNet -o ..\audio_tests\eta_beta_test_clean.mp3
+#python .\inference.py -f ..\audio_tests\eta_beta_test.mp3 -w checkpoint.pth -m ResNet 

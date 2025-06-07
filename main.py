@@ -13,7 +13,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import spectrogram as sp
 from sklearn.metrics import classification_report, confusion_matrix
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error
+from ResNet8 import ResNet8
 
 
 
@@ -69,6 +70,7 @@ class myDataset(Dataset):
 
         # now reading actual data from file
         clip_name = self.labels_df["clip_name"].iloc[index]
+        clip_name = clip_name.replace(".wav", ".mp3")  # Ensure correct file extension
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
 
         # Apply data augmentation only for training set
@@ -351,7 +353,7 @@ def initialize_model(architecture, num_classes, device):
     """
     Initialize a model with two heads: one for classification and one for bounding box regression.
     """
-    if architecture == "ResNet":
+    if architecture == "ResNet18":
         # Load ResNet18
         model = torchvision.models.resnet18(weights=None)
 
@@ -383,14 +385,10 @@ def initialize_model(architecture, num_classes, device):
 
     elif architecture == "MobileNet":
         # Load MobileNetV2
-        model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V1)
+        model = torchvision.models.mobilenet_v2(weights=None)
 
         # Modify the first convolutional layer to accept 1 input channel
         model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=1, bias=False)
-
-        # Freeze all layers in the feature extractor
-        for param in model.features.parameters():
-            param.requires_grad = False
 
         # Remove the original classifier
         num_features = model.last_channel
@@ -404,13 +402,108 @@ def initialize_model(architecture, num_classes, device):
             nn.Linear(256, num_classes)  # Output: num_classes for classification
         )
         bb_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 2)  # Output: 2 (delta, center)
+        )
+
+        print("Using MobileNetV2 with two heads...\n")
+    elif architecture == "VGG":
+        # Load VGG19 without pretrained weights
+        model = torchvision.models.vgg19(weights=None)
+
+        # Modify the first convolutional layer to accept 1 input channel
+        model.features[0] = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1)
+
+        # Remove the original classifier
+        num_features = model.classifier[0].in_features
+        model.classifier = nn.Identity()  # Identity to extract features
+
+        # Add two separate heads for classification and regression
+        class_head = nn.Sequential(
+            nn.Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
+        )
+
+        bb_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(256, 2)  # Output: 2 (delta, center)
+        )
+
+        print("Using VGG19 with two heads...\n")
+
+    elif architecture == "ResNet34":
+        # Load ResNet34
+        model = torchvision.models.resnet34(weights=None)
+
+        # Modify the first convolutional layer to accept 1 input channel
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+
+        # Remove the original fully connected layer
+        num_features = model.fc.in_features
+        model.fc = nn.Identity()  # Replace with identity to extract features
+
+        # Add two separate heads for classification and regression
+        class_head = nn.Sequential(
             nn.Linear(num_features, 256),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(256, 2)  # Output: 2 for bounding box regression
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
+        )
+        bb_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 2)  # Output: 2 (delta, center)
         )
 
-        print("Using MobileNetV2 with frozen feature extractor and two heads...\n")
+        print("Using ResNet34 with two heads...\n")
+
+    elif architecture == "ResNet8":
+        # Load ResNet8
+        model = ResNet8(0)
+
+        # Modify the first convolutional layer to accept 1 input channel
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
+
+        # Remove the original fully connected layer
+        num_features = model.fc.in_features
+        model.fc = nn.Identity()  # Replace with identity to extract features
+
+        # Add two separate heads for classification and regression
+        class_head = nn.Sequential(
+            nn.Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes)  # Output: num_classes for classification
+        )
+        bb_head = nn.Sequential(
+            nn.Linear(num_features, 512),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 2)  # Output: 2 (delta, center)
+        )
+
+        print("Using ResNet8 adapted with two heads...\n")
+
+
 
     else:
         raise ValueError("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
@@ -598,14 +691,14 @@ def prepare_dataloaders(train_set, test_set, validation_set, batch_size, device,
 def main():
 
     # Starting with always the same seed for weights reproducibility
-    torch.manual_seed(42)
+    torch.manual_seed(56)
     # Set device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
 
     # Dataset
-    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V3")
     print(f"training on {root_folder}...\n")
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
@@ -625,7 +718,7 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
+    architecture = "MobileNet"  # Choose between "ResNet18" and "MobileNet" and "ResNet34" and "VGG" and "ResNet8"
     model = initialize_model(architecture, num_classes, device)
     print(model)
     summary(model, (1, 224, 224))
@@ -635,9 +728,11 @@ def main():
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
     #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    lambda_coord = 25
+    #lambda_coord = 25 #static
     #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=lambda_coord)
-    criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=2*lambda_coord, init_lambda_delta=lambda_coord, init_lambda_coherence=lambda_coord, class_weights=class_weights).to(device)
+    lambda_coord = 0.1 #dynamic
+    criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=1.5*lambda_coord, init_lambda_delta=lambda_coord, init_lambda_coherence=2*lambda_coord, class_weights=class_weights).to(device)
+
 
     # Training parameters
     #lr = 0.00001 #low
@@ -661,6 +756,7 @@ def main():
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        criterion.load_state_dict(checkpoint["loss_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         print(f"Checkpoint caricato: epoca {checkpoint['epoch']}\n")
     else:
@@ -712,7 +808,8 @@ def main():
                     'epoch': epoch,  # Salva l'epoca corrente
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict()
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'loss_state_dict': criterion.state_dict(),
                 }
                 # Esporta il checkpoint in un file
                 torch.save(checkpoint, checkpoint_path)

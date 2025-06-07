@@ -14,7 +14,7 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     """
     # Inizializza il modello
     num_classes = len(validation_loader.dataset.classes_list)
-    model = initialize_model("ResNet",num_classes, device)
+    model = initialize_model("ResNet34",num_classes, device)
 
     # Carica i pesi salvati
     checkpoint = torch.load(model_path)
@@ -35,7 +35,7 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset e DataLoader
-    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V3")
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
     class_order = train_set.classes_list  # Save the class order from the training set

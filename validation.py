@@ -1,40 +1,38 @@
 import os
 import torch
-from main import myDataset  # Assicurati che la classe myDataset sia definita correttamente
-from torch.utils.data import DataLoader
-from main import CombinedLoss  # Assicurati che CombinedLoss sia definita correttamente
-from main import initialize_model  # Assicurati che initialize_model sia definita correttamente
-from main import evaluate  # Assicurati che evaluate sia definita correttamente
-from main import prepare_dataloaders  # Assicurati che prepare_dataloaders sia definita correttamente
+from main import myDataset  
+from main import CombinedLoss  
+from main import initialize_model  
+from main import evaluate  
+from main import prepare_dataloaders 
 
 
 def validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold, negative_class_index):
     """
     Load the best model weights and perform validation.
     """
-    # Inizializza il modello
+    # Model initialization
     num_classes = len(validation_loader.dataset.classes_list)
-    model = initialize_model("ResNet34",num_classes, device)
+    model = initialize_model("ResNet18",num_classes, device)
 
-    # Carica i pesi salvati
+    # Loading the best model weights
     checkpoint = torch.load(model_path)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
     print("Best model weights loaded successfully.")
 
-    # Esegui la validazione
+    # Validation
     validation_loss = evaluate(
         model, criterion, validation_loader, device, iou_threshold, negative_class_index
     )
 
 
-# Esegui la validazione con il modello salvato
 def main():
-    # Assicurati che il dispositivo sia configurato
+    # Check if CUDA is available and set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # Dataset e DataLoader
+    # Dataset and DataLoader
     root_folder = os.path.join("..", "DATASET_COMPLETO_V3")
     # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
@@ -58,14 +56,14 @@ def main():
     criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=0.5*lambda_coord)
     
 
-    # Indice della classe "Nonfiller"
+    # Index of class "Nonfiller"
     negative_class_index = validation_set.classes_dict["Nonfiller"]
 
-    # Percorso del modello salvato
+    # Path to the model checkpoint
     model_path = os.path.join("..","checkpoint.pth")
-    #model_path = os.path.join("results", "ResNet4.pth")
 
-    # Esegui la validazione
+
+    # VALIDATION
     validate_with_best_model(model_path, test_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)
 
 

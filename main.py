@@ -307,7 +307,6 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     )
     print(f"Percentage of predictions with relative error on delta within 10%: {n_pred_low_rel_err/len(all_target_bb[:,0])*100:.2f}%")
 
-
     # MAE for center and delta
     mae_center = mean_absolute_error(all_target_bb[:, 1], all_output_bb[:, 1])
     mae_delta = mean_absolute_error(all_target_bb[:, 0], all_output_bb[:, 0])
@@ -336,8 +335,14 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     plt.title("Distribution of Center and Delta Absolute Errors")
     plt.legend()
     plt.grid(True)
-    plt.savefig("center_delta_error_distribution.png")
-    print("Saved center and delta error distribution to 'center_delta_error_distribution.png'")
+    # Save updated plot
+    distrib_dir = "images"
+    if not os.path.exists(distrib_dir):
+        os.path.makedirs(distrib_dir)
+    plot_file= "center_delta_error_distribution.png"
+    plt.savefig(os.path.join(distrib_dir,plot_file))
+    print(f"Updated distribution plot saved in {plot_file}")
+
 
     # CLASSIFICATION + REGRESSION
     print("\nOverall Metrics:")
@@ -384,14 +389,14 @@ def initialize_model(architecture, num_classes, device):
         print("Using ResNet18 with two heads...\n")
 
     elif architecture == "MobileNet":
-        # Load MobileNetV2
-        model = torchvision.models.mobilenet_v2(weights=None)
+        # Load MobileNetV3(large)
+        model = torchvision.models.mobilenet_v3_large(weights=None)
 
         # Modify the first convolutional layer to accept 1 input channel
-        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=1, bias=False)
+        model.features[0][0] = nn.Conv2d(1, 16, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), groups=1, bias=False)
 
         # Remove the original classifier
-        num_features = model.last_channel
+        num_features = model.classifier[0].in_features
         model.classifier = nn.Identity()  # Replace with identity to extract features
 
         # Add two separate heads for classification and regression
@@ -411,7 +416,7 @@ def initialize_model(architecture, num_classes, device):
             nn.Linear(256, 2)  # Output: 2 (delta, center)
         )
 
-        print("Using MobileNetV2 with two heads...\n")
+        print("Using MobileNetV3(large) with two heads...\n")
     elif architecture == "VGG":
         # Load VGG19 without pretrained weights
         model = torchvision.models.vgg19(weights=None)
@@ -503,8 +508,6 @@ def initialize_model(architecture, num_classes, device):
 
         print("Using ResNet8 adapted with two heads...\n")
 
-
-
     else:
         raise ValueError("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
 
@@ -540,11 +543,11 @@ class CombinedLoss(nn.Module):
 
     def forward(self, output, target):
         output_class = output[:, :self.num_classes]
-        output_delta = output[:, self.num_classes]  # Larghezza (delta)
-        output_center = output[:, self.num_classes + 1]  # Centro
+        output_delta = output[:, self.num_classes]  # Delta
+        output_center = output[:, self.num_classes + 1]  # Center
         target_class = target[:, :self.num_classes]
-        target_delta = target[:, self.num_classes]  # Larghezza (delta)
-        target_center = target[:, self.num_classes + 1]  # Centro
+        target_delta = target[:, self.num_classes]  # Delta
+        target_center = target[:, self.num_classes + 1]  # Center
 
 
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
@@ -581,41 +584,41 @@ class CombinedLoss(nn.Module):
 class DynamicCombinedLoss(nn.Module):
     def __init__(self, classes_list, init_lambda_center, init_lambda_delta, init_lambda_coherence, class_weights=None):
         """
-        init_lambda_* sono i valori iniziali che si utilizzeranno per inizializzare i parametri dinamici.
-        Questi verranno trasformati in log sigma per stabilità numerica e per permettere la loro ottimizzazione.
+        init_lambda_* are the initial values used to initialize the dynamic parameters.
+        These parameters will be transformed in log-sigma to improve numerical stability and allow their optimization process.
         """
         super(DynamicCombinedLoss, self).__init__()
         self.num_classes = len(classes_list)
         self.classes_list = classes_list
 
-        # Loss per la classificazione (si mantiene invariata)
+        # Classification Loss 
         self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         
-        # Loss per le regressioni (delta e center)
+        # Regression Losses (delta and center)
         self.delta_loss_fn = nn.SmoothL1Loss()
         self.center_loss_fn = nn.SmoothL1Loss()
         
-        # Parametri dinamici per pesare le componenti di regressione:
-        # Inizializziamo i parametri come log(sigma), in modo da garantire sigma > 0
+        # Dynamical parameters to weight the regression components:
+        # Initialize thems as log(sigma), to grant sigma > 0
         self.log_sigma_center = nn.Parameter(torch.log(torch.tensor(init_lambda_center, dtype=torch.float)))
         self.log_sigma_delta = nn.Parameter(torch.log(torch.tensor(init_lambda_delta, dtype=torch.float)))
         self.log_sigma_coherence = nn.Parameter(torch.log(torch.tensor(init_lambda_coherence, dtype=torch.float)))
 
     def forward(self, output, target):
-        # Estrazione delle componenti: la prima parte per la classificazione,
-        # le successive per le componenti di regressione
+        # Component extraction: first part for classification,
+        # the following for regression
         output_class = output[:, :self.num_classes]
-        output_delta = output[:, self.num_classes]       # Larghezza (delta)
-        output_center = output[:, self.num_classes + 1]    # Centro
+        output_delta = output[:, self.num_classes]       # Delta
+        output_center = output[:, self.num_classes + 1]    # Center
         
         target_class = target[:, :self.num_classes]
-        target_delta = target[:, self.num_classes]         # Larghezza (delta)
-        target_center = target[:, self.num_classes + 1]      # Centro
+        target_delta = target[:, self.num_classes]         # Delta
+        target_center = target[:, self.num_classes + 1]      # Center
 
-        # Loss per la classificazione
+        # Classification loss
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
 
-        # Creiamo una maschera per escludere i bounding box non positivi sulla base della classe 'Nonfiller'
+        # Mask to exclude non-positive BB based on 'Nonfiller' class
         positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller')
         
         if positive_mask.any():
@@ -624,34 +627,34 @@ class DynamicCombinedLoss(nn.Module):
             target_delta_pos = target_delta[positive_mask]
             target_center_pos = target_center[positive_mask]
 
-            # Calcolo delle loss per delta e center
+            # Center and delta losses
             delta_loss = self.delta_loss_fn(output_delta_pos, target_delta_pos)
             center_loss = self.center_loss_fn(output_center_pos, target_center_pos)
 
-            # Coherence loss: calcoliamo xmin e xmax dai centri e dagli delta
+            # Coherence loss: compute xmin e xmax of the intervals
             output_xmin = output_center_pos - (output_delta_pos / 2)
             output_xmax = output_center_pos + (output_delta_pos / 2)
             target_xmin = target_center_pos - (target_delta_pos / 2)
             target_xmax = target_center_pos + (target_delta_pos / 2)
             
-            # Usiamo lo stesso tipo di loss (SmoothL1) per la componente di coerenza
+            # Use also the same loss (SmoothL1) for the coherence term
             coherence_loss = self.delta_loss_fn(output_xmin, target_xmin) + self.delta_loss_fn(output_xmax, target_xmax)
         else:
             delta_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
             center_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
             coherence_loss = torch.tensor(0.0, device=output.device, dtype=output.dtype)
 
-        # Calcoliamo sigma da log_sigma (per garantire positività)
+        # Compute sigma from log_sigma (to grant positivity)
         sigma_center = torch.exp(self.log_sigma_center)
         sigma_delta = torch.exp(self.log_sigma_delta)
         sigma_coherence = torch.exp(self.log_sigma_coherence)
 
-        # Pesi dinamici per ogni loss: formulazione uncertainty weighting
+        # Dynamical weights for each loss: uncertainty weighting
         weighted_center_loss = center_loss / (2 * sigma_center ** 2) + self.log_sigma_center
         weighted_delta_loss = delta_loss / (2 * sigma_delta ** 2) + self.log_sigma_delta
         weighted_coherence_loss = coherence_loss / (2 * sigma_coherence ** 2) + self.log_sigma_coherence
 
-        # La loss totale è la somma della loss per la classificazione e quelle pesate per le regressioni
+        # Total loss is the sum of classification one and the other weighted regressions
         total_loss = class_loss + weighted_center_loss + weighted_delta_loss + weighted_coherence_loss
 
         return total_loss, class_loss, weighted_delta_loss, weighted_center_loss, weighted_coherence_loss
@@ -705,7 +708,7 @@ def main():
     class_order = train_set.classes_list  # Save the class order from the training set
     class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
     print(f"Class order (from training set): {class_order}")
-    print(f'#occorrenze train_set: {class_counts}\n')
+    print(f'Train_set Nr. of occurrences: {class_counts}\n')
     # Apply the same class order to validation and test datasets
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
@@ -718,19 +721,21 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    architecture = "MobileNet"  # Choose between "ResNet18" and "MobileNet" and "ResNet34" and "VGG" and "ResNet8"
+    architecture = "MobileNet"  # Choose between "ResNet8", "ResNet18", "ResNet34", "MobileNet" and "VGG" 
     model = initialize_model(architecture, num_classes, device)
     print(model)
     summary(model, (1, 224, 224))
 
     # LOSS function
-    # Calcola i pesi inversamente proporzionali alla frequenza delle classi
+    # Class weights are the inverse of class frequencies
     class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
     class_weights = (1.0 / class_counts).to(device)
-    #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
-    #lambda_coord = 25 #static
+    #criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1) 
+    # STATIC LOSS
+    #lambda_coord = 25
     #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights, lambda_center=lambda_coord, lambda_delta=2*lambda_coord, lambda_coherence=lambda_coord)
-    lambda_coord = 0.1 #dynamic
+    # DYNAMIC LOSS
+    lambda_coord = 0.1 
     criterion = DynamicCombinedLoss(classes_list=class_order, init_lambda_center=1.5*lambda_coord, init_lambda_delta=lambda_coord, init_lambda_coherence=2*lambda_coord, class_weights=class_weights).to(device)
 
 
@@ -758,9 +763,9 @@ def main():
         scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         criterion.load_state_dict(checkpoint["loss_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        print(f"Checkpoint caricato: epoca {checkpoint['epoch']}\n")
+        print(f"Checkpoint loaded: epoch {checkpoint['epoch']}\n")
     else:
-        print("Nessun checkpoint trovato. Inizio del training da zero.\n")
+        print("No checkpoint found. Starting from scratch.\n")
         
 
 
@@ -803,17 +808,17 @@ def main():
             # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
-                # Salva il checkpoint
+                # Save checkpoint
                 checkpoint = {
-                    'epoch': epoch,  # Salva l'epoca corrente
+                    'epoch': epoch,  # Save current epoch
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'loss_state_dict': criterion.state_dict(),
                 }
-                # Esporta il checkpoint in un file
+                # Export checkpoint on a file
                 torch.save(checkpoint, checkpoint_path)
-                print(f"Checkpoint salvato all'epoca {epoch} con validation loss {validation_loss:.4f}")
+                print(f"Checkpoint saved on epoch {epoch} with validation loss {validation_loss:.4f}")
 
             # Plot the average training loss per epoch
             plt.figure(figsize=(10, 6))
@@ -824,9 +829,12 @@ def main():
             plt.title("Training Loss Over Epochs")
             plt.legend()
             plt.grid(True)
-            # Salva il grafico aggiornato
-            plt.savefig(plot_file)
-            print(f"Grafico aggiornato salvato in {plot_file}")
+            # Save updated plot
+            train_graph_dir = "images"
+            if not os.path.exists(train_graph_dir):
+                os.path.makedirs(train_graph_dir)
+            plt.savefig(os.path.join(train_graph_dir,plot_file))
+            print(f"Updated loss plot saved in {plot_file}")
 
             # Monitor the learning rate
             current_lr = scheduler.get_last_lr()[0]

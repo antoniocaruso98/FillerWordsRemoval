@@ -24,6 +24,7 @@ def converti_flac_a_wav(cartella):
 
             comando = [
                 "ffmpeg",
+                "-loglevel", "quiet",  # Sopprime ogni messaggio
                 "-i",
                 percorso_flac,  # Input file
                 percorso_wav,  # Output file

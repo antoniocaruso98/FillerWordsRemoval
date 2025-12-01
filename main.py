@@ -28,26 +28,25 @@ class myDataset(Dataset):
         self.type = type
         match self.type:
             case "train":
-                labels_file = "PodcastFillers_train_labels_shuffled.csv"
+                labels_file = "PodcastFillers_Decentered_train_shuffled.csv"
             case "test":
-                labels_file = "PodcastFillers_test_labels_shuffled.csv"
+                labels_file = "PodcastFillers_Decentered_test_shuffled.csv"
             case "validation":
-                labels_file = "PodcastFillers_validation_labels_shuffled.csv"
-        self.labels_file_path = labels_file
+                labels_file = "PodcastFillers_Decentered_validation_shuffled.csv"
+        self.labels_file_path = os.path.join(root_folder,labels_file)
 
         # full path to data folder
         self.data_folder = os.path.join(root_folder, type)
 
         # read labels file inside a Pandas Dataframe
         self.labels_df = pd.read_csv(self.labels_file_path)
-        # list all unique classes (column: 'label')
-        self.classes_list = self.labels_df["label"].unique().tolist()
+        # list all unique classes (column: 'label') in alphabetical order
+        self.classes_list = sorted(self.labels_df["label"].unique().tolist())
 
         # associate each class name to an integer in the range [0, n-1]
         # for fast access Class name --> Class index
-        self.classes_dict = {}
-        for i, e in enumerate(self.classes_list):
-            self.classes_dict.update({e: i})
+        self.classes_dict = {e: i for i, e in enumerate(self.classes_list)}
+
 
     def __getitem__(self, index):
         # read row 'index' from the Dataframe
@@ -70,6 +69,25 @@ class myDataset(Dataset):
         clip_name = self.labels_df["clip_name"].iloc[index]
         audio, sr = librosa.load(os.path.join(self.data_folder, clip_name), sr=16000)
 
+        # Apply data augmentation
+        if np.random.rand() > 0.5:  # Randomly scale volume
+            gain = np.random.uniform(0.8, 1.2)  # Scale volume by 0.8x to 1.2x
+            audio = audio * gain
+            
+        if np.random.rand() > 0.5:  # Randomly apply pitch shifting
+            n_steps = np.random.uniform(-2, 2)  # Shift pitch by -2 to +2 semitones
+            audio = librosa.effects.pitch_shift(audio, sr=sr, n_steps=n_steps)
+
+        if np.random.rand() > 0.5:  # Randomly apply time stretching
+            rate = np.random.uniform(0.8, 1.2)  # Stretch by 0.8x to 1.2x
+            audio = librosa.effects.time_stretch(audio, rate=rate)
+            full_label[-2] = full_label[-2] * rate
+            full_label[-1] = full_label[-1] * rate
+
+        if np.random.rand() > 0.5:  # Randomly add noise
+            noise = np.random.normal(0, 0.005, audio.shape)
+            audio = audio + noise
+
         # creating LOG-MEL spectrogram
         n_fft = 512
         n_mels = 128
@@ -82,14 +100,19 @@ class myDataset(Dataset):
         # normalize the spectrogram values to [0, 1]
         spec = sp.normalize_spectrogram(spec)
 
-        # shift spectrogram on time axis by random amount (+- half size).
-        # The remaining part is filled with 0s
-        random_number = np.random.uniform(-0.5, 0.5)
+        
+        '''# shift spectrogram on time axis by random amount (+- half size).
+        # The remaining part is filled with noise.
+        if 'rate' in locals(): # if it is present the time stretching, we modulate the shift
+            random_number = np.random.uniform(-0.5 * rate, 0.5 * rate)
+        else:
+            random_number = np.random.uniform(-0.5, 0.5)
         shift = int(random_number * size)
-        spec = sp.shift_spectrogram(spec, shift)
+        noise_level= sp.calculate_noise_level(audio, snr_db=30) # Mid-level noise
+        spec = sp.shift_spectrogram(spec, shift, noise_level)
 
         # update the center_t label
-        full_label[-2] += random_number
+        full_label[-2] += random_number'''
 
         # plot the spectrogram for debug purposes
         #sp.plot_spectrogram(spec, sr, hop_length=(n_fft // 2))
@@ -101,7 +124,7 @@ class myDataset(Dataset):
         return len(self.labels_df)
 
 
-def train(model, criterion, optimizer, epoch, log_interval, train_loader, device):
+def train(model, criterion, optimizer, epoch, log_interval, train_loader, device, scheduler):
     """Train the model for one epoch."""
     model.train()
     losses = []
@@ -117,6 +140,9 @@ def train(model, criterion, optimizer, epoch, log_interval, train_loader, device
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # Update the learning rate scheduler
+        scheduler.step()
 
         # Log training stats
         if batch_idx % log_interval == 0:
@@ -150,10 +176,9 @@ def number_of_correct(output, target, iou_threshold,negative_class_index):
     negative_correct = equal[negative_class_mask].sum().item()
 
     # Only for correct class predictions of positives, compute IoU
-    # The rest is 0.0 and remains 0.0 (IoU=0.0)
     # select only last two columns which contain bounding box coordinates
-    output_bounding_box = output[equal, -2:]
-    target_bounding_box = target[equal, -2:]
+    output_bounding_box = output[(equal & ~negative_class_mask), -2:]
+    target_bounding_box = target[(equal & ~negative_class_mask), -2:]
 
     iou = intersection_over_union(output_bounding_box, target_bounding_box)
 
@@ -204,6 +229,11 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     all_targets = []
     all_predictions = []
     pbar = tqdm(total=len(loader), desc="Testing", leave=False)
+    # Create a dictionary, to store classification with localization predictions
+    # It contains for each class i, (the # of correct predictions for that class + # of total predictions for that class + # of elements in the class)
+    n_classes= len(loader.dataset.classes_list)
+    dictionary= {i: [] for i in range(n_classes)}
+
 
     with torch.no_grad():
         for data, target in loader:
@@ -236,7 +266,7 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     )
     print("\nClassification Report:\n", report)
 
-    # Generate confusion matrix
+    # Generate classification confusion matrix
     conf_matrix = confusion_matrix(all_targets, all_predictions)
     print("\nConfusion Matrix:\n", conf_matrix)
 
@@ -247,36 +277,56 @@ def evaluate(model, criterion, loader, device, iou_threshold, negative_class_ind
     return total_loss, accuracy, report
 
 
-def initialize_model(num_classes, device):
+def initialize_model(architecture,num_classes, device):
     """
-    Initialize a MobileNet model for classification and bounding box regression.
+    Initialize a ResNet model for classification and bounding box regression.
     """
-    # Load MobileNetV2
-    mobilenet = torchvision.models.mobilenet_v2(weights=None) 
+    if architecture == "ResNet":
+        # Load ResNet18
+        model = torchvision.models.resnet18(weights=None)
     
-    # Modify the first convolutional layer to accept 1 input channel
-    mobilenet.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        # Modify the first convolutional layer to accept 1 input channel
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
     
-    # Modify the classifier to output 7 (classes) + 2 (bounding box regression) = 9
-    mobilenet.classifier = nn.Sequential(
-        nn.Linear(mobilenet.last_channel, 256),  # Add a hidden layer
-        nn.ReLU(),
-        nn.Dropout(0.2),
-        nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
-    )
-    
+        # Modify the fully connected layer to output 7 (classes) + 2 (bounding box regression) = 9
+        model.fc = nn.Sequential(
+            nn.Linear(model.fc.in_features, 256),  # Add a hidden layer
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes + 2)  # Output: 7 classes + 2 BB regression
+        )
+        print("Using ResNet18...\n")
+    elif architecture == "MobileNet":
+        # Load MobileNetV2
+        model = torchvision.models.mobilenet_v2(weights=None)
+        
+        # Modify the first convolutional layer to accept 1 input channel
+        model.features[0][0] = nn.Conv2d(1, 32, kernel_size=(3, 3), stride=(2, 2), padding=(1, 1), bias=False)
+        
+        # Modify the classifier to output num_classes + 2 (bounding box regression)
+        model.classifier = nn.Sequential(
+            nn.Linear(model.last_channel, 256),  # Add a hidden layer
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, num_classes + 2)  # Output: num_classes + 2 for bounding box regression
+        )
+        print("Using MobileNetv2...\n")
+
+    else:
+        print("Unsupported architecture. Choose 'ResNet' or 'MobileNet'.")
     # Move to device
-    mobilenet = mobilenet.to(device)
-    return mobilenet
+    model = model.to(device)
+    return model
 
 
 class CombinedLoss(nn.Module):
-    def __init__(self, num_classes, lambda_coord=1):
+    def __init__(self, classes_list, lambda_coord=0.5, class_weights=None):
         super(CombinedLoss, self).__init__()
-        self.num_classes = num_classes
+        self.num_classes = len(classes_list)
         self.lambda_coord = lambda_coord
-        self.class_loss_fn = nn.CrossEntropyLoss()
+        self.class_loss_fn = nn.CrossEntropyLoss(weight=class_weights)
         self.bb_loss_fn = nn.MSELoss()
+        self.classes_list = classes_list
 
     def forward(self, output, target):
         output_class = output[:, :self.num_classes]
@@ -287,7 +337,40 @@ class CombinedLoss(nn.Module):
         class_loss = self.class_loss_fn(output_class, target_class.argmax(dim=1))
 
         # We want to ingnore negative class BB
-        positive_mask = target_class.argmax(dim=1) != 0  # First class is "Nonfiller"
+        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller')  
+        if positive_mask.any():
+            output_bb = output_bb[positive_mask]
+            target_bb = target_bb[positive_mask]
+            bb_loss = self.bb_loss_fn(output_bb, target_bb)
+        else:
+            bb_loss = 0.0  # No one positive
+
+
+        return class_loss + self.lambda_coord * bb_loss
+    
+class GlobalMSELoss(nn.Module):
+    def __init__(self, classes_list, lambda_coord=0.5):
+        super(GlobalMSELoss, self).__init__()
+        self.num_classes = len(classes_list)
+        self.lambda_coord = lambda_coord
+        self.class_loss_fn = nn.MSELoss()
+        self.bb_loss_fn = nn.MSELoss()
+        self.classes_list = classes_list
+
+    def forward(self, output, target):
+
+        output_class = torch.softmax(output[:, :self.num_classes], dim=1)
+        #output_class = output[:, :self.num_classes]
+        output_bb = output[:, self.num_classes:]
+        target_class = target[:, :self.num_classes]
+        target_bb = target[:, self.num_classes:]
+
+        #class_loss = self.class_loss_fn(output_class.argmax(dim=1).float(), target_class.argmax(dim=1).float())
+        class_loss = self.class_loss_fn(output_class, target_class)
+
+
+        # We want to ingnore negative class BB
+        positive_mask = target_class.argmax(dim=1) != self.classes_list.index('Nonfiller') 
         if positive_mask.any():
             output_bb = output_bb[positive_mask]
             target_bb = target_bb[positive_mask]
@@ -337,8 +420,17 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset and DataLoader
-    root_folder = os.path.join("..", "Dataset_completo")
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    print(f"training on {root_folder}...\n")
+    
+    # Read the training dataset to get the class order
     train_set = myDataset(root_folder, "train")
+    class_order = train_set.classes_list  # Save the class order from the training set
+    class_counts = train_set.labels_df.sort_values(by="label")["label"].value_counts(sort=False)
+    print(f"Class order (from training set): {class_order}")
+    print(f'#occorrenze train_set: {class_counts}\n')
+
+    # Apply the same class order to validation and test datasets
     test_set = myDataset(root_folder, "test")
     validation_set = myDataset(root_folder, "validation")
 
@@ -349,28 +441,33 @@ def main():
 
     # Model initialization
     num_classes = len(train_set.classes_list)
-    model = initialize_model(num_classes, device)
+    architecture = "ResNet"  # Choose between "ResNet" and "MobileNet"
+    model = initialize_model(architecture, num_classes, device)
     # Load pre-trained model if available
     best_model_path = "best_model.pth"
     if os.path.exists(best_model_path):
         model.load_state_dict(torch.load(best_model_path, map_location=device))
-        print(f"Loaded best model from {best_model_path}")
+        print(f"Loaded best model from {best_model_path}\n")
     else:
-        print("No pre-trained model found. Starting training from scratch.")
+        print("No pre-trained model found. Starting training from scratch.\n")
     print(model)
     summary(model, (1, 224, 224))
 
-    # max learning rate
-    max_lr = 0.01
+    # Learning rate
+    lr = 0.001
     # Nr. epochs
-    n_epochs = 8
+    n_epochs = 6
 
     # Loss function, optimizer, and scheduler
-    criterion = CombinedLoss(num_classes=num_classes)
-    optimizer = Adam(model.parameters(), lr=max_lr, weight_decay=0.0001)
+    # Calcola i pesi inversamente proporzionali alla frequenza delle classi
+    class_counts = torch.tensor(class_counts.values, dtype=torch.float32)
+    class_weights = (1.0 / class_counts).to(device)
+    criterion = GlobalMSELoss(classes_list=class_order, lambda_coord=1)
+    #criterion = CombinedLoss(classes_list=class_order, class_weights=class_weights)
+    optimizer = Adam(model.parameters(), lr=lr, weight_decay=0.0001)
     scheduler = OneCycleLR(
         optimizer,
-        max_lr=max_lr,
+        max_lr=lr*10,
         steps_per_epoch=len(train_loader),
         epochs=n_epochs,
         anneal_strategy="linear",
@@ -398,6 +495,7 @@ def main():
                 log_interval,
                 train_loader,
                 device,
+                scheduler,
             )
             # compute avg loss for entire epoch and add to list 'losses'
             losses.append(float(np.mean(train_losses)))
@@ -408,22 +506,22 @@ def main():
                 negative_class_index=train_set.classes_dict["Nonfiller"]
             )
             print(f"Validation set: Loss: {validation_loss:.4f}, Accuracy: {validation_accuracy:.2f}%")
-            scheduler.step()
             # Saving the best model
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
                 torch.save(model.state_dict(), "best_model.pth")
 
-    # Plot the average training loss per epoch
-    plt.figure(figsize=(10, 6))
-    plt.plot(losses, label="Training Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training Loss Over Epochs")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-    plt.savefig("training_loss.png")
+            # Plot the average training loss per epoch
+            plt.figure(figsize=(10, 6))
+            plt.plot(losses, label="Training Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title("Training Loss Over Epochs")
+            plt.legend()
+            plt.grid(True)
+            plt.show(block=False)
+            plt.savefig("training_loss.png")
+    
 
     # Final evaluation on the test set
     test_loss, test_accuracy, test_report = evaluate(
@@ -436,3 +534,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

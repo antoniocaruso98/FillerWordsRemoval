@@ -14,7 +14,7 @@ def validate_with_best_model(model_path, validation_loader, criterion, device, i
     """
     # Inizializza il modello
     num_classes = len(validation_loader.dataset.classes_list)
-    model = initialize_model(num_classes, device)
+    model = initialize_model("ResNet",num_classes, device)
 
     # Carica i pesi salvati
     model.load_state_dict(torch.load(model_path))
@@ -34,13 +34,15 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset e DataLoader
-    root_folder = os.path.join("..", "Dataset_completo")
-    validation_set = myDataset(root_folder, "validation")
-    train_set = myDataset(root_folder, "training")
-    # Supponendo che tu abbia un'istanza del dataset chiamata train_set
+    root_folder = os.path.join("..", "DATASET_COMPLETO_V2")
+    # Read the training dataset to get the class order
+    train_set = myDataset(root_folder, "train")
+    class_order = train_set.classes_list  # Save the class order from the training set
+    print(f"Class order (from training set): {class_order}")
+    # Apply the same class order to validation and test datasets
+    test_set = myDataset(root_folder, "test", classes_list=class_order)
+    validation_set = myDataset(root_folder, "validation", classes_list=class_order)
 
-    print(train_set.classes_dict)
-    test_set = myDataset(root_folder, "test")
     batch_size = 64
     _, _, validation_loader = prepare_dataloaders(train_set, test_set, validation_set, batch_size, device)
 
@@ -53,6 +55,7 @@ def main():
 
     # Percorso del modello salvato
     model_path = "best_model.pth"
+    #model_path = os.path.join("results", "ResNet4.pth")
 
     # Esegui la validazione
     validate_with_best_model(model_path, validation_loader, criterion, device, iou_threshold=0.5, negative_class_index=negative_class_index)

@@ -76,18 +76,41 @@ def normalize_spectrogram(sp):
     return (sp - min_val) / (max_val - min_val)
 
 
-def shift_spectrogram(sp, shift):
+def shift_spectrogram(sp, shift, noise_level=0.01):
     """
     Return a new spectrogram shifting the original one on the time axis by
-    the required amount
+    the required amount. Adds noise instead of zeros to simulate ambient noise.
+    
+    Parameters:
+    - sp: Input spectrogram.
+    - shift: Amount of shift on the time axis.
+    - noise_level: Standard deviation of the Gaussian noise to add.
     """
     size = len(sp[1])
-    new_sp = np.zeros((size, size))
+    new_sp = np.random.normal(0, noise_level, (size, size))  # Add Gaussian noise
     if shift > 0:
         new_sp[:, shift:] = sp[:, :-shift]
     elif shift < 0:
         new_sp[:, :shift] = sp[:, -shift:]
+    else:
+        new_sp = sp  # No shift
     return new_sp
+
+
+def calculate_noise_level(signal, snr_db):
+    """
+    Calcola il livello di rumore per ottenere un SNR specifico.
+    
+    Parameters:
+    - signal: Segnale originale.
+    - snr_db: Rapporto segnale-rumore desiderato in decibel.
+    
+    Returns:
+    - noise_level: Deviazione standard del rumore.
+    """
+    signal_power = np.mean(signal ** 2)
+    noise_power = signal_power / (10 ** (snr_db / 10))
+    return np.sqrt(noise_power)
 
 
 def plot_spectrogram(sp, sr, hop_length):

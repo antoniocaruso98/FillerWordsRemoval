@@ -1,3 +1,18 @@
+# Note on Dataset and weights
+
+Due to limitations in the file size, uploading either the Dataset and/or the weights on Moodle was not possible.
+
+Thus, we provide two separate Google Drive links to download both of them:
+
+- [DATASET_COMPLETO_V3.zip](https://drive.google.com/file/d/1lpnk34adSk0F-MZSwmQNq1yXLPZuGJD-/view?usp=drive_link)
+- [Weights_and_plots.zip](https://drive.google.com/file/d/16DnFEGe9qGahYQg3nC1ohA2-9NHhYYH8/view?usp=sharing)
+
+> Note: in order to make the model work, the correct path to the desired model weights file must be specified in main.py (or, in case, the desired checkpoint.pth file should be copied to the code parent directory). In case of errors when loading the checkpoint.pth file, use the parameter **weights_only = False**.
+
+> Note: the dataset folder should be placed in the code parent folder.
+
+
+
 REQUIREMENTS
 ------------------
 
@@ -61,4 +76,5 @@ https://zenodo.org/records/7121457#.Y0bzKezMKdY
 - Deep Learning Object Detection Approaches to Signal Identification: https://arxiv.org/abs/2210.16173
 - You Only Hear Once: A YOLO-like Algorithm for Audio Segmentation and Sound Event Detection: https://arxiv.org/abs/2109.00962
 - SpeechYOLO: Detection and Localization of Speech Objects: https://arxiv.org/abs/1904.07704 - repository: https://github.com/MLSpeech/speech_yolo
+
 

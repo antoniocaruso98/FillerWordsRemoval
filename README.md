@@ -11,6 +11,16 @@ Thus, we provide two separate Google Drive links to download both of them:
 
 > Note: the dataset folder should be placed in the code parent folder.
 
+# Model usage
+
+This folder includes 5 python modules:
+
+1. *main.py*: contains the model implementation, training and testing phases
+2. *spectrogram.py*: contains some functions used to load and preprocess audio
+3. *validation.py*: contains code which enables to perform validation phase only
+4. *ResNet8.py*: contains a Pytorch implementation of ResNet8 model, which is not available in torchvision package
+5. *inference.py*: contains code which enables to used the trained model in order to produce clean audio files
+
 
 
 REQUIREMENTS
@@ -76,5 +86,6 @@ https://zenodo.org/records/7121457#.Y0bzKezMKdY
 - Deep Learning Object Detection Approaches to Signal Identification: https://arxiv.org/abs/2210.16173
 - You Only Hear Once: A YOLO-like Algorithm for Audio Segmentation and Sound Event Detection: https://arxiv.org/abs/2109.00962
 - SpeechYOLO: Detection and Localization of Speech Objects: https://arxiv.org/abs/1904.07704 - repository: https://github.com/MLSpeech/speech_yolo
+
 
 
